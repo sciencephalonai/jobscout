@@ -1,0 +1,36 @@
+# ─── Secrets / local config ───────────────────────────────────────────────────
+.env
+.env.local
+.env.*.local
+# keep the sanitized template
+!.env.example
+
+# ─── Databases / local data ───────────────────────────────────────────────────
+*.duckdb
+*.duckdb.wal
+*conflicted copy*
+
+# ─── Python ───────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.venv/
+venv/
+.coverage
+htmlcov/
+
+# ─── Node / frontend ──────────────────────────────────────────────────────────
+node_modules/
+frontend/dist/
+frontend/node_modules/
+*.local
+
+# ─── Tooling / editor / OS ────────────────────────────────────────────────────
+.claude/
+.playwright-mcp/
+.DS_Store
+Icon?
+*.log

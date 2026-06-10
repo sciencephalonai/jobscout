@@ -1,0 +1,15 @@
+compliance:
+  user_agent: "JobScoutBot/1.0 (+https://example.com/about-jobscout)"
+  respect_robots_txt: true
+  default_delay_seconds: 3
+  max_concurrency_per_domain: 1
+  backoff_seconds: [2, 8, 32]
+  allow_auth_access: false
+  store_full_description_for_scraped: false
+  collect_personal_data: false
+  blocklist_file: blocklist.yaml
+
+scrapers:
+  jobspy:
+    enabled: true
+    sites: [indeed, glassdoor]

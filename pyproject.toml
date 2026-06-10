@@ -1,0 +1,58 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "jobscout"
+version = "0.1.0"
+description = "Multi-portal job aggregation engine with AI enrichment"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.111.0",
+    "uvicorn[standard]>=0.29.0",
+    "pydantic>=2.7.0",
+    "pydantic-settings>=2.2.0",
+    "weaviate-client>=4.4.0",
+    "duckdb>=0.10.0",
+    "httpx>=0.27.0",
+    "python-jobspy>=1.1.80",
+    "feedparser>=6.0.11",
+    "dateparser>=1.2.0",
+    "ftfy>=6.0",
+    "google-generativeai>=0.5.0",
+    "openai>=1.30.0",
+    "apscheduler>=3.10.4",
+    "python-multipart>=0.0.9",
+    "protego>=0.3.1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.2.0",
+    "pytest-asyncio>=0.23.6",
+    "ruff>=0.4.4",
+    "mypy>=1.10.0",
+    "httpx>=0.27.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["backend"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+select = ["E", "F", "I", "UP", "B", "SIM"]
+ignore = ["E501"]
+
+[tool.ruff.isort]
+known-first-party = ["jobscout"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["backend/tests"]

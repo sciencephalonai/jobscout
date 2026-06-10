@@ -1,0 +1,98 @@
+sources:
+  adzuna:
+    enabled: true
+    app_id: ${ADZUNA_APP_ID}
+    app_key: ${ADZUNA_APP_KEY}
+    countries: [us]          # JobScout is US-only
+
+  remotive:
+    enabled: true            # free public API, no key, remote tech jobs
+
+  arbeitnow:
+    enabled: true            # free public API, no key
+
+  jobicy:
+    enabled: true            # free public API, no key, remote jobs
+
+  jobrightai:
+    enabled: true            # SSR JSON extraction from /jobs/* (robots.txt allows)
+
+  remoteok:
+    enabled: false           # disabled: apply links resolve to a blank JS-only
+                             # page on remoteok.com (no usable employer link)
+
+  workingnomads:
+    enabled: true            # free public API, no key, remote jobs
+
+  themuse:
+    enabled: true            # free public API, optional key
+
+  greenhouse:
+    enabled: true            # public per-company board API, no key
+    # Each company: board token + employee-count bucket (exact value used by the
+    # company-size filter; LLM enrichment estimates size for other sources).
+    companies:
+      - {token: stripe, size: "5000+"}
+      - {token: databricks, size: "1001-5000"}
+      - {token: gitlab, size: "1001-5000"}
+      - {token: airbnb, size: "5000+"}
+      - {token: coinbase, size: "5000+"}
+      - {token: reddit, size: "1001-5000"}
+      - {token: dropbox, size: "1001-5000"}
+      - {token: robinhood, size: "1001-5000"}
+      - {token: instacart, size: "1001-5000"}
+      - {token: doordash, size: "5000+"}
+      - {token: pinterest, size: "1001-5000"}
+      - {token: brex, size: "501-1000"}
+      - {token: anthropic, size: "501-1000"}
+      - {token: notion, size: "201-500"}
+      - {token: figma, size: "501-1000"}
+      - {token: rampcom, size: "501-1000"}
+
+  lever:
+    enabled: true            # public per-company postings API, no key
+    # Only verified-working Lever slugs (others 404 and are skipped).
+    companies:
+      - {token: spotify, size: "5000+"}
+      - {token: netflix, size: "5000+"}
+
+  # --- ATS platforms (per-company, no key, DIRECT employer apply links) ---
+  ashby:
+    enabled: true            # api.ashbyhq.com posting API
+    companies:
+      - {token: openai, size: "1001-5000"}
+
+  workable:
+    enabled: true            # apply.workable.com widget API
+    # Verified US-jobs slugs (zego dropped — UK-only).
+    companies:
+      - {token: "mlabs", size: "51-200"}
+      - {token: "cynet-corp", size: "51-200"}
+      - {token: "33usa", size: "1-50"}
+      - {token: "dof", size: "201-500"}
+      - {token: "m-files", size: "201-500"}
+      - {token: "nogigiddy", size: "51-200"}   # high US volume (gig roles; many near-dup reposts)
+
+  smartrecruiters:
+    enabled: true            # api.smartrecruiters.com postings API
+    companies:
+      - {token: Visa, size: "5000+"}
+
+  recruitee:
+    enabled: true            # {company}.recruitee.com offers API
+    # Verified US-jobs slugs (tether dropped — global/crypto, non-US).
+    companies:
+      - {token: "altiussearchgroup", size: "51-200"}
+      - {token: "anywhereworks", size: "201-500"}
+      - {token: "greatminds", size: "201-500"}
+      - {token: "kravet", size: "201-500"}
+      - {token: "nucsai", size: "1-50"}
+
+  jobspy:
+    enabled: true            # scrapes Indeed and Glassdoor (high risk — explicit opt-in)
+    sites: [indeed, glassdoor]
+    hours_old: 168
+
+  rss:
+    enabled: false
+    feeds: []
