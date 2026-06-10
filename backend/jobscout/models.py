@@ -51,6 +51,10 @@ class Job(BaseModel):
     known_h1b_sponsor: bool = False         # company appears in public DoL H-1B filer list
     known_everify: bool = False             # company is a known E-Verify participant (STEM OPT gate)
     is_recruiter_post: bool = False         # recruiter/aggregator wrapper vs. direct employer
+    category: Literal[
+        "software_eng", "data_ml_ai", "devops_infra", "security",
+        "product_mgmt", "design_ux", "management", "other"
+    ] = "other"
     enrichment_status: Literal["pending", "done", "failed"] = "pending"
     raw_payload: str | None = None          # JSON-serialised original API response
     # Response-only (computed at query time, never stored): near-duplicate repost collapse.
