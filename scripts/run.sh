@@ -10,6 +10,18 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 cd "${REPO_ROOT}"
 
+# --- Prefer the project's isolated virtualenv if present ---
+# Keeps the backend off any shared (e.g. anaconda) interpreter. Falls back to
+# whatever `uvicorn` is on PATH when no .venv exists.
+if [[ -x "${REPO_ROOT}/.venv/bin/uvicorn" ]]; then
+  UVICORN="${REPO_ROOT}/.venv/bin/uvicorn"
+  echo "Using project virtualenv: ${REPO_ROOT}/.venv"
+else
+  UVICORN="uvicorn"
+  echo "No .venv found — using 'uvicorn' from PATH ($(command -v uvicorn 2>/dev/null || echo 'NOT FOUND'))."
+  echo "  Tip: python3 -m venv .venv && .venv/bin/pip install -e '.[dev]'"
+fi
+
 API_LOG="/tmp/jobscout_api.log"
 FE_LOG="/tmp/jobscout_fe.log"
 API_PID_FILE="/tmp/jobscout_api.pid"
@@ -45,7 +57,7 @@ sleep 1
 # --- Start the backend (must run from repo root: loads sources.yaml etc.) ---
 echo "Starting backend (uvicorn) -> ${API_LOG}"
 : > "${API_LOG}"
-uvicorn backend.jobscout.api.main:app --host 127.0.0.1 --port 8000 \
+"${UVICORN}" backend.jobscout.api.main:app --host 127.0.0.1 --port 8000 \
   >> "${API_LOG}" 2>&1 &
 API_PID=$!
 echo "${API_PID}" > "${API_PID_FILE}"
