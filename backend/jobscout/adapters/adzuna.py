@@ -267,14 +267,6 @@ def _normalise(result: dict, country: str) -> dict | None:
         # Posted date — keep as raw ISO string; ingestion layer parses it
         posted_date = _parse_date(result.get("created"))
 
-        # Employment type: Adzuna exposes contract_time ("full_time"/"part_time")
-        # and contract_type ("permanent"/"contract"). Prefer contract_type when
-        # it signals a contract role, else fall back to contract_time. Pass the
-        # raw native value through unchanged — normalize handles the mapping.
-        contract_type = result.get("contract_type")
-        contract_time = result.get("contract_time")
-        employment_type = contract_type if contract_type == "contract" else (contract_time or contract_type)
-
         return {
             "source_job_id": str(job_id) if job_id is not None else None,
             "title": title,
@@ -288,7 +280,6 @@ def _normalise(result: dict, country: str) -> dict | None:
             "salary_max": salary_max,
             "salary_currency": currency,
             "posted_date": posted_date,
-            "employment_type": employment_type,
         }
 
     except Exception as exc:  # noqa: BLE001

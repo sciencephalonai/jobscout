@@ -1,28 +1,17 @@
 """
-Workable public job-board API adapter.
+Workable public job-widget API adapter.
 
-Workable hosts each company's careers page under a *Workable subdomain* (the
-"account" token). The public, unauthenticated widget endpoint exposes a
-company's openings::
+Workable exposes an unauthenticated, per-account JSON feed of a company's
+published jobs at:
 
-    https://apply.workable.com/api/v1/widget/accounts/{account}?details=true
+    https://apply.workable.com/api/v1/widget/accounts/{account}
 
-No API key is required. With ``details=true`` the response includes the full
-HTML ``description`` for each job. There is no server-side keyword or location
-search, so the adapter fetches the full board for each configured account and
-filters client-side.
+The ``{account}`` is the company's Workable subdomain/slug. No API key is
+required and there is no server-side keyword search, so the adapter fetches each
+configured account's full job list and filters client-side — exactly like the
+Greenhouse and Lever adapters.
 
-Confirmed response shape (``apply.workable.com`` widget endpoint)::
-
-    {"name": "...", "description": "...", "jobs": [
-        {"title", "shortcode", "url", "application_url", "published_on",
-         "created_at", "country", "city", "state", "telecommuting",
-         "locations", "description", ...}
-    ]}
-
-``apply.workable.com/robots.txt`` publishes ``Disallow:`` (nothing disallowed),
-so the API path is permitted regardless; the request is additionally marked as
-an API source.
+Docs: https://help.workable.com/hc/en-us/articles/115013356548-Workable-API-Documentation
 """
 
 from __future__ import annotations
@@ -31,44 +20,54 @@ import html
 import logging
 from collections.abc import Iterator
 from datetime import UTC, datetime
+from typing import Any
 
-from jobscout.adapters.base import CompliantHttpClient, DomainBlockedError
+from jobscout.adapters.base import CompliantHttpClient, DomainBlockedError, keyword_title_match
+from jobscout.adapters.greenhouse import normalize_company_entries
 
 log = logging.getLogger(__name__)
 
 _BASE_URL = "https://apply.workable.com/api/v1/widget/accounts/{account}?details=true"
 
 
-def _parse_created_at(value: str | None) -> datetime | None:
-    """Parse a Workable date string (e.g. ``2025-11-21`` or an ISO timestamp)
-    into an aware UTC datetime. Returns ``None`` if falsy or unparseable."""
-    if not value:
-        return None
-    try:
-        dt = datetime.fromisoformat(str(value))
-    except (ValueError, TypeError):
-        return None
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=UTC)
-    return dt.astimezone(UTC)
+def _build_location(job: dict) -> tuple[str | None, str | None, str | None, str | None]:
+    """Return (location_str, city, country_code, remote) from a Workable job.
+
+    The public widget API puts location at the TOP LEVEL (``country``, ``city``,
+    ``state``, ``telecommuting``) plus a richer ``locations`` array whose entries
+    carry ``countryCode``. We read the array first (it has the ISO code), then
+    fall back to the top-level fields.
+    """
+    locs = job.get("locations")
+    first = locs[0] if isinstance(locs, list) and locs and isinstance(locs[0], dict) else {}
+
+    city = (first.get("city") or job.get("city") or "").strip() or None
+    region = (first.get("region") or job.get("state") or "").strip() or None
+    country = (first.get("country") or job.get("country") or "").strip() or None
+    country_code = (first.get("countryCode") or "").strip() or None
+
+    parts = [p for p in (city, region, country) if p]
+    location_str = ", ".join(parts) or None
+    remote = "remote" if job.get("telecommuting") else None
+    return location_str, city, country_code, remote
 
 
 class WorkableAdapter:
-    """Wraps the Workable public job-board widget API.
+    """Wraps the Workable public job-widget API.
 
     Attributes
     ----------
     name:
         Adapter identifier used as the ``source`` column in the DB.
     method:
-        ``"api"`` — fetches from the official Workable public widget API.
+        ``"api"`` — fetches from the public Workable widget endpoint.
     risk:
         ``"low"`` — uses an official, unauthenticated public API endpoint.
     store_full_description:
-        ``True`` — full HTML description is available (``details=true``).
-    companies:
-        List of Workable account tokens (careers subdomain) to query.
-        Defaults to an empty list.
+        ``True`` — full description text is stored when the feed provides it.
+    accounts:
+        List of account entries — each a slug string or a ``{token, type}`` dict.
+        Stored as ``(account, employer_type)`` pairs.
     """
 
     name = "workable"
@@ -76,12 +75,8 @@ class WorkableAdapter:
     risk = "low"
     store_full_description = True
 
-    def __init__(self, companies: list[str] | None = None) -> None:
-        self.companies: list[str] = list(companies or [])
-
-    # ------------------------------------------------------------------
-    # Protocol implementation
-    # ------------------------------------------------------------------
+    def __init__(self, accounts: list[Any] | None = None) -> None:
+        self.accounts: list[tuple[str, str]] = normalize_company_entries(accounts)
 
     def search(
         self,
@@ -91,40 +86,12 @@ class WorkableAdapter:
         since: datetime | None,
         http: CompliantHttpClient,
     ) -> Iterator[dict]:
-        """Yield raw job dicts from the Workable widget API.
-
-        Iterates over all configured account tokens, fetching each board's full
-        job list and filtering client-side until *results_wanted* jobs have been
-        yielded in total. Never raises — all errors are logged and skipped.
-
-        Parameters
-        ----------
-        keywords:
-            Search terms. A job is kept only if the (space-joined,
-            case-insensitive) keyword string appears in the job title. If
-            *keywords* is empty, all jobs are kept.
-        location:
-            Unused — Workable's widget API has no server-side location filter;
-            location handling happens downstream.
-        results_wanted:
-            Upper bound on the total number of results to yield.
-        since:
-            If given, only jobs whose ``created_at`` is on or after this
-            datetime are yielded.
-        http:
-            :class:`~jobscout.adapters.base.CompliantHttpClient` instance used
-            for all HTTP requests.
-        """
-        if not self.companies:
-            log.warning("WorkableAdapter has no companies configured — skipping")
+        """Yield raw job dicts from the Workable widget feed (client-side filtered)."""
+        if not self.accounts:
+            log.warning("WorkableAdapter has no accounts configured — skipping")
             return
-
         if results_wanted <= 0:
             return
-
-        # Single case-insensitive needle from the keywords. No server-side
-        # search, so match this substring against the job title client-side.
-        needle = " ".join(k.strip() for k in keywords if k.strip()).lower()
 
         since_aware: datetime | None = None
         if since is not None:
@@ -132,23 +99,18 @@ class WorkableAdapter:
 
         total_yielded = 0
 
-        for account in self.companies:
+        for account, employer_type in self.accounts:
             if total_yielded >= results_wanted:
                 break
 
             url = _BASE_URL.format(account=account)
-
             try:
-                resp = http.get(url, api_source=self.method == "api")
+                resp = http.get(url, api_source=True)
             except DomainBlockedError as exc:
-                log.warning(
-                    "Workable domain blocked (%s) — skipping account %s", exc, account
-                )
+                log.warning("Workable domain blocked (%s) — skipping account %s", exc, account)
                 continue
             except Exception as exc:  # noqa: BLE001
-                log.error(
-                    "HTTP error fetching Workable board for %s: %s", account, exc
-                )
+                log.error("HTTP error fetching Workable account %s: %s", account, exc)
                 continue
 
             if resp.status_code != 200:
@@ -166,83 +128,67 @@ class WorkableAdapter:
                 continue
 
             jobs: list[dict] = data.get("jobs") or []
-            log.debug(
-                "Workable account=%s: fetched %d jobs (total yielded so far: %d)",
-                account,
-                len(jobs),
-                total_yielded,
-            )
+            company_name = (data.get("name") or account).strip() or account
 
             for job in jobs:
                 if total_yielded >= results_wanted:
                     break
-
                 try:
                     title = str(job.get("title") or "").strip()
                     if not title:
                         continue
-
-                    # Client-side keyword filter against the title.
-                    if needle and needle not in title.lower():
+                    if not keyword_title_match(title, keywords):
                         continue
 
-                    # Client-side `since` filter on created_at.
-                    created_at_raw = job.get("created_at") or job.get("published_on")
+                    posted_raw = job.get("published_on") or job.get("created_at")
                     if since_aware is not None:
-                        created_at = _parse_created_at(created_at_raw)
-                        if created_at is None or created_at < since_aware:
+                        parsed = _parse_iso(posted_raw)
+                        if parsed is None or parsed < since_aware:
                             continue
 
-                    shortcode = job.get("shortcode") or job.get("code")
-                    url_value = (
-                        job.get("url")
-                        or job.get("application_url")
-                        or job.get("shortlink")
-                        or ""
-                    ).strip() or None
-
-                    description_html = job.get("description")
-                    description = (
-                        html.unescape(description_html) if description_html else None
+                    job_url = (
+                        (job.get("url") or job.get("application_url") or job.get("shortlink") or "")
+                        .strip()
+                        or None
                     )
+                    if not job_url:
+                        continue
 
-                    # Build a human-readable location string from city/state/country.
-                    location_parts = [
-                        str(job.get(part)).strip()
-                        for part in ("city", "state", "country")
-                        if job.get(part)
-                    ]
-                    location_str = ", ".join(p for p in location_parts if p) or None
+                    location_str, city, country_code, remote = _build_location(job)
+                    desc = job.get("description")
+                    description = html.unescape(desc) if desc else None
+                    shortcode = job.get("shortcode") or job.get("id")
 
-                    # Remote signal: explicit telecommuting flag, or a location
-                    # entry flagged remote.
-                    remote_value: str | None = None
-                    if job.get("telecommuting"):
-                        remote_value = "remote"
-                    else:
-                        for loc in job.get("locations") or []:
-                            if isinstance(loc, dict) and (
-                                loc.get("telecommuting") or loc.get("workplaceType") == "remote"
-                            ):
-                                remote_value = "remote"
-                                break
-
-                    yield {
+                    raw: dict = {
                         "title": title,
-                        "company": account,
-                        "url": url_value,
+                        "company": company_name,
+                        "url": job_url,
                         "description": description,
                         "location": location_str,
-                        "remote": remote_value,
-                        "posted_date": created_at_raw,
-                        "source_job_id": str(shortcode) if shortcode else None,
+                        "city": city,
+                        "country": country_code,
+                        "posted_date": posted_raw,
+                        "source_job_id": str(shortcode) if shortcode is not None else None,
+                        "employer_type": employer_type,
                     }
+                    if remote:
+                        raw["remote"] = remote
+
+                    yield raw
                     total_yielded += 1
                 except Exception as exc:  # noqa: BLE001
                     log.warning(
-                        "Failed to process Workable job (account=%s, shortcode=%s): %s",
-                        account,
-                        job.get("shortcode"),
-                        exc,
+                        "Failed to process Workable job (account=%s): %s", account, exc
                     )
                     continue
+
+
+def _parse_iso(value: str | None) -> datetime | None:
+    """Parse an ISO-8601 timestamp into an aware UTC datetime, or None."""
+    if not value:
+        return None
+    try:
+        dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (ValueError, TypeError):
+        return None
+    return dt if dt.tzinfo else dt.replace(tzinfo=UTC)

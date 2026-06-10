@@ -39,6 +39,31 @@ def test_single_visa_filter() -> None:
     assert build_filters(visa=["yes"]) is not None
 
 
+def test_employer_type_filter() -> None:
+    assert build_filters(employer_type=["university", "hospital"]) is not None
+
+
+def test_cap_exempt_filter() -> None:
+    assert build_filters(cap_exempt=["likely"]) is not None
+
+
+def test_security_clearance_filter() -> None:
+    assert build_filters(security_clearance=["none"]) is not None
+
+
+def test_exclude_citizenship_required_flag() -> None:
+    assert build_filters(exclude_citizenship_required=True) is not None
+
+
+def test_exclude_recruiter_flag() -> None:
+    assert build_filters(exclude_recruiter=True) is not None
+
+
+def test_hourly_presets_apply() -> None:
+    for preset in ("6h", "12h", "18h"):
+        assert build_filters(date_range=preset) is not None
+
+
 def test_single_company_size_filter() -> None:
     assert build_filters(company_size=["startup"]) is not None
 

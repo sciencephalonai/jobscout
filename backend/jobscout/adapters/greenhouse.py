@@ -17,12 +17,32 @@ import html
 import logging
 from collections.abc import Iterator
 from datetime import UTC, datetime
+from typing import Any
 
-from jobscout.adapters.base import CompliantHttpClient, DomainBlockedError
+from jobscout.adapters.base import CompliantHttpClient, DomainBlockedError, keyword_title_match
 
 log = logging.getLogger(__name__)
 
 _BASE_URL = "https://boards-api.greenhouse.io/v1/boards/{board_token}/jobs?content=true"
+
+
+def normalize_company_entries(companies: list[Any] | None) -> list[tuple[str, str]]:
+    """Normalise a config ``companies`` list to ``[(token, employer_type), ...]``.
+
+    Each entry may be a plain token string or a ``{token, type, size}`` dict. The
+    ``type`` (employer_type, e.g. ``"university"``/``"nonprofit"``) lets a curated
+    board stamp the cap-exempt employer class; it defaults to ``"unclear"``.
+    """
+    out: list[tuple[str, str]] = []
+    for c in companies or []:
+        if isinstance(c, dict):
+            token = c.get("token") or c.get("name")
+            employer_type = c.get("type") or "unclear"
+            if token:
+                out.append((str(token), str(employer_type)))
+        elif c:
+            out.append((str(c), "unclear"))
+    return out
 
 
 def _parse_updated_at(value: str | None) -> datetime | None:
@@ -53,7 +73,8 @@ class GreenhouseAdapter:
     store_full_description:
         ``True`` — full description text is available and stored.
     companies:
-        List of Greenhouse board tokens (company slugs) to query.
+        List of Greenhouse board entries — each a token string or a
+        ``{token, type}`` dict. Stored as ``(token, employer_type)`` pairs.
         Defaults to an empty list.
     """
 
@@ -62,8 +83,8 @@ class GreenhouseAdapter:
     risk = "low"
     store_full_description = True
 
-    def __init__(self, companies: list[str] | None = None) -> None:
-        self.companies: list[str] = list(companies or [])
+    def __init__(self, companies: list[Any] | None = None) -> None:
+        self.companies: list[tuple[str, str]] = normalize_company_entries(companies)
 
     # ------------------------------------------------------------------
     # Protocol implementation
@@ -108,14 +129,11 @@ class GreenhouseAdapter:
         if results_wanted <= 0:
             return
 
-        # Build a single case-insensitive needle from the keywords. Greenhouse
-        # offers no server-side search, so we match this substring against the
-        # job title client-side. Empty keywords → keep everything.
-        needle = " ".join(k.strip() for k in keywords if k.strip()).lower()
-
+        # Greenhouse has no server-side search; filter titles client-side by ANY
+        # keyword (keyword_title_match). Empty keywords → keep everything.
         total_yielded = 0
 
-        for board_token in self.companies:
+        for board_token, employer_type in self.companies:
             if total_yielded >= results_wanted:
                 break
 
@@ -169,8 +187,8 @@ class GreenhouseAdapter:
                     if not title:
                         continue
 
-                    # Client-side keyword filter against the title.
-                    if needle and needle not in title.lower():
+                    # Client-side keyword filter against the title (ANY keyword).
+                    if not keyword_title_match(title, keywords):
                         continue
 
                     # Client-side `since` filter on updated_at.
@@ -198,6 +216,7 @@ class GreenhouseAdapter:
                         "location": location_name,
                         "posted_date": updated_at_raw,
                         "source_job_id": str(job_id) if job_id is not None else None,
+                        "employer_type": employer_type,
                     }
                     total_yielded += 1
                 except Exception as exc:  # noqa: BLE001

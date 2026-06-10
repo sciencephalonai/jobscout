@@ -200,13 +200,6 @@ def _normalise(
         else:
             description = None
 
-        # job_types is a list (e.g. ["Full Time"], ["Internship"]); take the
-        # first value. normalize maps the native string to a canonical type.
-        job_types = job.get("job_types")
-        employment_type = (
-            job_types[0] if isinstance(job_types, list) and job_types else None
-        )
-
         result: dict = {
             "title": title,
             "company": company,
@@ -215,7 +208,6 @@ def _normalise(
             "location": location,
             "posted_date": posted_date,
             "source_job_id": job.get("slug") or None,
-            "employment_type": employment_type,
         }
 
         if job.get("remote"):

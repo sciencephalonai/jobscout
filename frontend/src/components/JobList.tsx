@@ -1,4 +1,4 @@
-import type { Job } from '../types'
+import type { Job, Verdict } from '../types'
 import JobCard from './JobCard'
 
 interface JobListProps {
@@ -11,6 +11,8 @@ interface JobListProps {
   selectedJobId: string | null
   onJobSelect: (jobId: string) => void
   onPageChange: (page: number) => void
+  verdicts?: Record<string, Verdict>
+  activeProfileId?: string | null
 }
 
 // ---------------------------------------------------------------------------
@@ -127,6 +129,8 @@ export default function JobList({
   selectedJobId,
   onJobSelect,
   onPageChange,
+  verdicts,
+  activeProfileId,
 }: JobListProps) {
   return (
     <div>
@@ -196,6 +200,8 @@ export default function JobList({
               job={job}
               isSelected={selectedJobId === job.job_id}
               onSelect={onJobSelect}
+              verdict={verdicts?.[job.job_id]}
+              activeProfileId={activeProfileId ?? null}
             />
           ))}
         </div>

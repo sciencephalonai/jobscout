@@ -10,23 +10,30 @@ JobScout is a multi-portal job aggregation and filtering engine. It ingests list
 
 ## Implementation Status
 
-This repo is now well past the original "Phase 1". Enrichment, scheduling, and most Phase 3 adapters are built. Use this table — not the spec's phase plan — as the source of truth:
+This repo is at roughly **Phase 3** (enrichment, resume matching, most adapters, source-status dashboard) **plus a user-profile + deterministic verdict/scoring layer**. The remaining gaps (do not assume they exist):
 
 | Area | State | Notes |
 |---|---|---|
 | `CompliantHttpClient` + adapter protocol | ✅ Built | `adapters/base.py` |
-| Adapters | ✅ ~15 built | adzuna, remotive, arbeitnow, jobicy, jobrightai, remoteok, workingnomads, themuse, greenhouse, lever, ashby, workable, smartrecruiters, recruitee, jobspy. `rss` is in `sources.yaml` (disabled) with **no adapter code**. |
-| Normalization + dedup hash + category derivation + US filter | ✅ Built | `normalize.py` (`raw_to_job`, `compute_job_id`, `derive_category`, `is_us_job`) |
-| Weaviate store (local **and** Weaviate Cloud) + hybrid search + facets/stats | ✅ Built | `store.py`, `search.py` |
+| Adapters | ✅ 18 built | Adzuna, Remotive, Arbeitnow, Jobicy, RemoteOK, WorkingNomads, TheMuse, Greenhouse, Lever, **Ashby**, **Workable**, **Workday** (CXS POST API), **Rippling**, **Recruitee**, **SmartRecruiters**, **RSS**, **JobrightAI**, JobSpy. Workable/Workday/Rippling/RSS/Recruitee/SmartRecruiters now **enabled** (smoke-tested). JobSpy + JobrightAI off by default (runtime-togglable). USAJOBS deliberately skipped (federal roles need citizenship). **Per-company ATS title filter uses `keyword_title_match` (ANY keyword) — fixed a multi-keyword "joined-phrase" bug that returned nothing.** |
+| Normalization + dedup hash | ✅ Built | `normalize.py` |
+| Weaviate store + hybrid search + facets/stats | ✅ Built | `store.py`, `search.py` |
 | DuckDB `runs` + `job_sources` | ✅ Built | `relational.py` |
 | FastAPI endpoints | ✅ Built | see `## API Endpoints` below |
 | React filter UI | ✅ Built | `frontend/` |
-| **DeepSeek enrichment** | ✅ **Built** | `enrich.py::extract_enrichment`. Runs **synchronously at ingest** (YoE / visa / skills / seniority / company-size / employment-type) and also via the decoupled `POST /api/enrich/run` endpoint. `enrichment_status` ∈ `done`/`failed`/`pending`. |
-| **APScheduler** | ✅ Built | `BackgroundScheduler` + `CronTrigger` started in the FastAPI `lifespan`; cron from `settings.ingest_schedule` (default `0 8 * * *`). |
-| **Resume matching** | ❌ Not built | No endpoint, no `near_vector` call |
-| **LangGraph agentic search** | ❌ Not built | No `agent/` directory |
+| **DeepSeek enrichment** | ✅ Built | `enrich.py` extracts `yoe_min/max`, `visa_sponsorship`, `skills`, `seniority`, `company_size_bucket` via DeepSeek, synchronously during ingest. `enrichment_status` set to `done`/`failed`/`pending` accordingly |
+| Enrichment: clearance / employer_type / cap_exempt / recruiter-flag | ✅ Built | `enrich.py` extracts `security_clearance`, `citizenship_required`, `employer_type`; `cap_exempt` derived via `derive_cap_exempt()`; `is_recruiter_post` heuristic. Curated adapters stamp `employer_type` from config (wins over LLM) |
+| **User profiles + verdict/scoring** | ✅ Built | `UserProfile` + `user_job_state` in DuckDB; `verdict.py` pure Apply/Flag/Reject engine; `/api/jobs?profile_id=` attaches verdicts, excludes applied/hidden, sorts cap-exempt-first; profile CRUD endpoints |
+| **Resume matching** | ✅ Built | `POST /api/match` — embeds resume via `embed_query()`, `near_vector` with profile eligibility filters + verdicts |
+| **Progressive lookback windowing** | ✅ Built | `/api/jobs?target_min=` widens 6h→12h→18h→24h; hourly presets added to `DATE_PRESETS` |
+| **Service layer** | ✅ Built | `services/source_config.py` (sources.yaml load/merge/adapter construction), `services/query_service.py` (dedup, date-range, resume match, semantic scoring, saved-search counts), `services/ingestion_service.py` (ingestion/enrichment/watchlist-refresh). `api/main.py` is thin (routes → services → repositories). `RelationalStore` serializes its single DuckDB connection with a re-entrant lock (background ingestion thread + request handlers). |
+| **Cap-exempt sources** | ✅ Built | Curated Greenhouse nonprofits (mozilla/khanacademy/givewell) + `scripts/probe_workday.py` verifies cap-exempt Workday tenants (universities/AMCs/nonprofit-research) from `data/workday_cap_exempt_seeds.txt` → `sources.discovered.yaml`. `type` stamps cap-exempt; tenant `name` stamps the employer. **`services/registry.py` projects these into the company registry at startup so the Companies tab shows them + "Get companies" refreshes them (incl Workday via `region`/`site` columns).** |
+| **Saved searches + pipeline** | ✅ Built | `saved_searches` + new-since-last-visit counts; application-status pipeline (applied/oa/interview/offer/rejected) with notes. |
+| **APScheduler** | ✅ Built (off by default) | `scheduler.py` daily auto-refresh; `settings.scheduler_enabled` gates it. Ingestion is on-demand (`POST /api/search/run`) otherwise. |
+| **Weaviate backup** | ✅ Built | `backup.py` + `scripts/export_weaviate.py`/`import_weaviate.py` export the index **with vectors** (`include_vector=True`) to `data/weaviate_export.jsonl.gz` and restore it — **$0, no embedding calls**. Import refuses on a vector-dimension mismatch (no mixing models). Opt-in `EXPORT_AFTER_INGEST` (default off) re-exports after each ingest. |
+| **LangGraph agentic search** | ❌ Not built | No `agent/` directory (optional Phase 4) |
 
-There is also **no `README.md`** despite `pyproject.toml` referencing it.
+A `README.md` (setup/run guide) exists at the repo root.
 
 ## Stack
 
@@ -45,24 +52,15 @@ There is also **no `README.md`** despite `pyproject.toml` referencing it.
 ## Development Commands
 
 ```bash
-# One-shot local dev: clears stale uvicorn (DuckDB single-writer lock), starts
-# backend on :8000 and frontend on :5173, polls for health. Logs in /tmp.
-scripts/run.sh          # start both    scripts/stop.sh  # stop both
-scripts/health.sh       # check status
-
 # Start Weaviate
 docker-compose up -d
 
 # Install backend
 pip install -e ".[dev]"
 
-# Run backend manually — MUST be launched from the repo root.
+# Run backend — MUST be launched from the repo root.
 # sources.yaml and blocklist.yaml are loaded relative to the process CWD.
 uvicorn backend.jobscout.api.main:app --reload
-
-# Backfill the `category` property on existing Weaviate objects after adding
-# the category feature (pages the whole collection, updates category only)
-python scripts/backfill_categories.py
 
 # Run tests
 pytest backend/tests/
@@ -89,7 +87,7 @@ curl -X POST http://localhost:8000/api/search/run \
   -d '{"keywords": ["software engineer"], "location": "remote", "results_wanted": 50}'
 ```
 
-Copy `.env.example` to `.env` and fill in keys before running. `GOOGLE_API_KEY` is needed for embeddings (every ingest call embeds) — set `EMBED_MODEL=gemini-embedding-001`. `ADZUNA_APP_ID`/`ADZUNA_APP_KEY` enable the Adzuna adapter. `DEEPSEEK_API_KEY` now drives enrichment — without it, enrichment is skipped and jobs land `enrichment_status="pending"`. `INGEST_SCHEDULE`/`INGEST_KEYWORDS`/`INGEST_RESULTS_WANTED` configure the APScheduler cron. Set `WEAVIATE_CLUSTER_URL`+`WEAVIATE_API_KEY` to use Weaviate Cloud instead of the local Docker instance.
+Copy `.env.example` to `.env` and fill in keys before running. `GOOGLE_API_KEY` is needed for embeddings (every ingest call embeds). `ADZUNA_APP_ID`/`ADZUNA_APP_KEY` enable the Adzuna adapter. `DEEPSEEK_API_KEY` drives enrichment (`enrich.py`, OpenAI-compatible client) — extracting YoE/visa/skills/seniority/clearance/employer_type during ingest.
 
 Note: the `${ADZUNA_APP_ID}`-style placeholders in `sources.yaml` are **not** expanded — `_load_sources_cfg` is a plain `yaml.safe_load`. Credentials come from `.env` via `jobscout.config.settings`; `sources.yaml` only toggles `enabled` and per-source options.
 
@@ -100,30 +98,16 @@ Note: the `${ADZUNA_APP_ID}`-style placeholders in `sources.yaml` are **not** ex
 | GET | `/api/jobs` | Hybrid search + filters + pagination (the main query endpoint) |
 | GET | `/api/jobs/{job_id}` | Fetch one job by canonical id |
 | POST | `/api/search/run` | Kick off on-demand ingestion (FastAPI `BackgroundTasks`, returns `RunLog` stubs immediately) |
-| POST | `/api/enrich/run` | Re-run DeepSeek enrichment over `pending`/`failed` jobs (`{"limit": 50}`) |
-| POST | `/api/purge/old` | Delete jobs older than 30 days from the index |
 | GET | `/api/sources/status` | Per-source last-run info (from DuckDB) |
 | GET | `/api/stats` | Aggregate counts: total, by source, by date bucket (Weaviate `aggregate`) |
-
-`GET /api/jobs` filters (all repeatable where noted): `q`, `location`, `remote`, `visa`, `exp` (entry/mid/senior/lead), `source`, `company_size`, `employment_type`, `category` (software_eng/data_ml_ai/devops_infra/security/product_mgmt/design_ux/management/other), `date_range` (24h/7d/14d/21d/1m/custom + `date_from`/`date_to`), `alpha` (hybrid blend), `sort` (relevance/posted_desc/salary_desc), `page`/`page_size`. With no date filter, a **1-month floor** is enforced so stale jobs never surface.
 
 ## Architecture
 
 ### Ingestion pipeline (linear ETL, NOT agentic)
 
-**As implemented today** (`api/main.py::_run_ingestion`), per job, in order:
-1. **Trigger** — three paths feed the *same* `_run_ingestion`: manual `POST /api/search/run`, the APScheduler cron job (`_scheduled_ingest`), and **auto-fetch** (a `GET /api/jobs` search returning `< AUTOFETCH_MIN_RESULTS` quietly kicks a background ingest for that query, deduped via `_autofetch_inflight`, capped at `AUTOFETCH_MAX_INFLIGHT`).
-2. `normalize.raw_to_job` → canonical schema + dedup hash + `derive_category`.
-3. **US-only gate** — `is_us_job(...)` drops non-US postings *before* the paid enrich/embed steps. **30-day age gate** — jobs with a reliable `posted_date` older than 30 days are skipped.
-4. **Per-company flood cap** — at most `MAX_JOBS_PER_COMPANY_PER_RUN` (15) jobs kept per company per run.
-5. **Enrichment (idempotent)** — if the job already exists in Weaviate with `enrichment_status="done"`, reuse its enriched fields and skip the DeepSeek call. Otherwise, if `DEEPSEEK_API_KEY` is set and there's a description, call `enrich.extract_enrichment` (YoE / visa / skills / seniority / company-size / employment-type). A hard failure marks `enrichment_status="failed"` instead of storing blank fields.
-6. **Company size** — exact value from `sources.yaml` company config wins; otherwise a per-run cache; otherwise the LLM estimate.
-7. **Location aggregation** — the same `job_id` posted in multiple cities is collapsed into one record whose `locations` is the union across this run and what's already stored.
-8. `embed_job(...)` embeds (title/company/skills/description) with the Gemini embedding model (see Stack note — set `EMBED_MODEL=gemini-embedding-001`, **not** the config default `text-embedding-005`, which 404s) → `WeaviateStore.upsert(job, vector)` → `RelationalStore.upsert_job_source(...)`.
+**As implemented today** (`services/ingestion_service.py::_run_ingestion`): `POST /api/search/run` schedules a FastAPI `BackgroundTasks` job → iterates enabled adapters → `normalize.py` (canonical schema + dedup hash) → **`enrich.py` (DeepSeek) extracts YoE/visa/skills/seniority/clearance/employer_type synchronously** → `embed_job(...)` embeds with the Gemini model (`gemini-embedding-001`) including the enriched skills → `WeaviateStore.upsert(job, vector)` → `RelationalStore.upsert_job_source(...)`. Each adapter run is bracketed by `start_run`/`finish_run` in the DuckDB `runs` table; `enrichment_status` is set `done`/`failed`. Idempotent: an already-enriched job in Weaviate is reused (no repeat DeepSeek call).
 
-Each adapter run is bracketed by `start_run`/`finish_run` in the DuckDB `runs` table.
-
-**Decoupled enrichment & purge:** `POST /api/enrich/run` re-runs DeepSeek over jobs currently `pending`/`failed` (recovery after an outage). `POST /api/purge/old` deletes jobs older than 30 days. `embed.py`'s docstrings still describe an older target flow (enrich → embed in a separate worker); the real flow is the single in-loop sequence above.
+**Optional daily refresh:** `scheduler.py` (APScheduler) can trigger `_refresh_watchlist` on a daily cadence — **off by default** (`settings.scheduler_enabled`). Enrichment is synchronous-at-ingest (not a separate worker); `embed.py` docstrings describe an earlier target flow.
 
 ### Source adapter layer (`adapters/`)
 All adapters implement `JobSourceAdapter` protocol (`adapters/base.py`). All HTTP goes through `CompliantHttpClient` — adapters cannot make raw requests. `CompliantHttpClient` enforces robots.txt, per-domain rate limiting (default 1 req/3s), exponential backoff on 429/503, honest User-Agent, and no-cookies. Adding a new source inherits compliance automatically.
@@ -131,8 +115,8 @@ All adapters implement `JobSourceAdapter` protocol (`adapters/base.py`). All HTT
 ### Search and storage (`store.py`, `search.py`)
 One Weaviate `Job` collection holds job objects + vectors. All queries (keyword, vector, metadata filters) compose in a single Weaviate `hybrid()` call — no two-stage FAISS+SQL re-filter. `alpha` parameter (0–1) blends BM25 vs vector ranking. Date presets map to `posted_date` filter ranges. Faceted counts come from Weaviate `aggregate` calls.
 
-### Resume matching (NOT yet built)
-Planned: resume text/PDF is embedded with the same model as jobs, then passed to `near_vector` with the same property filters, returning top 5. No endpoint or `near_vector` call exists yet.
+### Resume matching (✅ built)
+`POST /api/match` (text) and `POST /api/match/upload` (PDF/DOCX/TXT/JSON) embed the resume with the same model as jobs and run `near_vector` with the profile's eligibility filters, returning ranked matches with verdicts. Upload also parses the resume into a saved `UserProfile` (`resume.py`, DeepSeek) that drives verdicts/sorting. UI: the Profile tab's resume-drop (`ResumeMatchPanel`).
 
 ### Agentic search (NOT yet built — optional Phase 4, `agent/`)
 Planned LangGraph graph: `parse_intent` → `run_search` → `evaluate_results` → `adjust_filters` (loop, max 3 attempts) → `rank_and_summarize`. Only this layer would use LangGraph. Ingestion and enrichment stay linear. No `agent/` directory exists yet.

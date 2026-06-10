@@ -2,6 +2,7 @@ import DOMPurify from 'dompurify'
 import { formatDistanceToNow, parseISO } from 'date-fns'
 import type { Job } from '../types'
 import { useJob } from '../api/client'
+import { SponsorshipBadge, EVerifyBadge } from './SponsorshipBadge'
 
 interface JobDetailPaneProps {
   jobId: string
@@ -30,25 +31,6 @@ function currencySymbol(currency: string | null): string {
     USD: '$', EUR: '€', GBP: '£', CAD: 'C$', AUD: 'A$', INR: '₹',
   }
   return map[currency.toUpperCase()] ?? `${currency} `
-}
-
-// Prefer the aggregated `locations` array, else fall back to city/country,
-// else `location_raw`. Deduped, empties dropped.
-function displayLocations(job: Job): string[] {
-  const raw =
-    job.locations && job.locations.length > 0
-      ? job.locations
-      : [[job.city, job.country].filter(Boolean).join(', '), job.location_raw]
-  const seen = new Set<string>()
-  const out: string[] = []
-  for (const loc of raw) {
-    const trimmed = (loc ?? '').trim()
-    if (trimmed && !seen.has(trimmed)) {
-      seen.add(trimmed)
-      out.push(trimmed)
-    }
-  }
-  return out
 }
 
 function RemoteModeBadge({ mode }: { mode: Job['remote_mode'] }) {
@@ -159,8 +141,6 @@ export default function JobDetailPane({ jobId, onClose }: JobDetailPaneProps) {
   const { data: job, isLoading, isError, error } = useJob(jobId)
 
   const salary = job ? formatSalary(job.salary_min, job.salary_max, job.salary_currency) : null
-  const locations = job ? displayLocations(job) : []
-  const hasMultipleLocations = locations.length > 1
   const postedStr = job?.posted_date
     ? (() => {
         try {
@@ -189,12 +169,7 @@ export default function JobDetailPane({ jobId, onClose }: JobDetailPaneProps) {
                   {job.title}
                 </h1>
                 <p className="mt-1.5 text-sm text-slate-600">
-                  {(hasMultipleLocations
-                    ? [job.company]
-                    : [job.company, ...locations]
-                  )
-                    .filter(Boolean)
-                    .join(' · ')}
+                  {[job.company, job.city, job.country].filter(Boolean).join(' · ')}
                 </p>
               </>
             ) : null}
@@ -257,6 +232,8 @@ export default function JobDetailPane({ jobId, onClose }: JobDetailPaneProps) {
           <div className="px-8 py-6 space-y-6">
             {/* Badges */}
             <div className="flex flex-wrap gap-2">
+              <SponsorshipBadge job={job} />
+              <EVerifyBadge job={job} />
               <RemoteModeBadge mode={job.remote_mode} />
               {job.company_size_bucket && <CompanySizeBadge bucket={job.company_size_bucket} />}
               {job.seniority && job.seniority !== 'unknown' && (
@@ -269,22 +246,11 @@ export default function JobDetailPane({ jobId, onClose }: JobDetailPaneProps) {
               </span>
             </div>
 
-            {/* Locations (only when there are multiple) */}
-            {hasMultipleLocations && (
-              <div>
-                <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-500">
-                  Locations
-                </h3>
-                <div className="flex flex-wrap gap-1.5">
-                  {locations.map((loc) => (
-                    <span
-                      key={loc}
-                      className="inline-flex items-center rounded-md bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-600"
-                    >
-                      {loc}
-                    </span>
-                  ))}
-                </div>
+            {/* E-Verify rationale (STEM OPT) */}
+            {job.known_everify && (
+              <div className="rounded-lg border border-teal-100 bg-teal-50 px-4 py-2 text-xs text-teal-800">
+                <span className="font-semibold">E-Verify employer.</span> Required for the 24-month STEM
+                OPT extension. Advisory (curated list) — confirm on e-verify.gov before relying on it.
               </div>
             )}
 

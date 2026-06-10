@@ -2,13 +2,18 @@
 .env
 .env.local
 .env.*.local
-# keep the sanitized template
+# keep the sanitized template (this repo uses env.example)
+!env.example
 !.env.example
 
 # ─── Databases / local data ───────────────────────────────────────────────────
 *.duckdb
 *.duckdb.wal
 *conflicted copy*
+# Weaviate index export (large, regenerable via scripts/export_weaviate.py)
+data/*.jsonl.gz
+# Snapshot backups (may contain real keys — never publish)
+jobscout_BACKUP_*/
 
 # ─── Python ───────────────────────────────────────────────────────────────────
 __pycache__/

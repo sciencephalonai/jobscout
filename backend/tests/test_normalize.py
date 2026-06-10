@@ -6,11 +6,40 @@ from datetime import UTC, datetime, timedelta
 
 from jobscout.normalize import (
     compute_job_id,
+    fix_mojibake,
+    normalize_employment_type,
     normalize_remote,
     normalize_text,
+    normalize_title,
     parse_posted_date,
     raw_to_job,
 )
+
+# ── Ported-from-Dropbox helpers: mojibake, title, employment type ────────────
+
+class TestPortedHelpers:
+    def test_fix_mojibake_repairs_bad_utf8(self):
+        # "café" mis-decoded becomes "cafÃ©"; ftfy restores it.
+        assert fix_mojibake("cafÃ©") == "café"
+        assert fix_mojibake(None) is None
+        assert fix_mojibake("") == ""
+
+    def test_normalize_title_drops_parens_and_workmode(self):
+        assert normalize_title("Senior Engineer (Remote) [US]") == "senior engineer"
+        assert normalize_title("Data Scientist - Hybrid") == "data scientist"
+
+    def test_normalize_employment_type_buckets(self):
+        assert normalize_employment_type("Full-Time") == "full_time"
+        assert normalize_employment_type("Contractor") == "contract"
+        assert normalize_employment_type("Internship") == "internship"
+        assert normalize_employment_type(None) == "unknown"
+        assert normalize_employment_type("nonsense") == "unknown"
+
+    def test_compute_job_id_collapses_repost_variations(self):
+        # Same role reposted with a "(Remote)" qualifier must dedup to one id.
+        a = compute_job_id("Acme", "Data Engineer", "NYC")
+        b = compute_job_id("Acme", "Data Engineer (Remote)", "NYC")
+        assert a == b
 
 # ---------------------------------------------------------------------------
 # normalize_text
@@ -64,41 +93,44 @@ class TestNormalizeText:
 
 class TestComputeJobId:
     def test_returns_16_char_hex(self):
-        job_id = compute_job_id("Stripe", "Backend Engineer")
+        job_id = compute_job_id("Stripe", "Backend Engineer", "New York")
         assert len(job_id) == 16
         assert all(c in "0123456789abcdef" for c in job_id)
 
     def test_deterministic(self):
-        a = compute_job_id("Stripe", "Backend Engineer")
-        b = compute_job_id("Stripe", "Backend Engineer")
+        a = compute_job_id("Stripe", "Backend Engineer", "New York")
+        b = compute_job_id("Stripe", "Backend Engineer", "New York")
         assert a == b
 
     def test_different_titles_differ(self):
-        id_a = compute_job_id("Stripe", "Frontend Engineer")
-        id_b = compute_job_id("Stripe", "Backend Engineer")
+        id_a = compute_job_id("Stripe", "Frontend Engineer", "New York")
+        id_b = compute_job_id("Stripe", "Backend Engineer", "New York")
         assert id_a != id_b
 
     def test_different_companies_differ(self):
-        id_a = compute_job_id("Stripe", "Backend Engineer")
-        id_b = compute_job_id("Plaid", "Backend Engineer")
+        id_a = compute_job_id("Stripe", "Backend Engineer", "New York")
+        id_b = compute_job_id("Plaid", "Backend Engineer", "New York")
         assert id_a != id_b
 
-    def test_location_does_not_affect_id(self):
-        """Location is excluded from the key — same role collapses across cities."""
-        assert compute_job_id("Stripe", "Backend Engineer") == compute_job_id(
-            "Stripe", "Backend Engineer"
-        )
+    def test_different_cities_differ(self):
+        id_a = compute_job_id("Stripe", "Backend Engineer", "New York")
+        id_b = compute_job_id("Stripe", "Backend Engineer", "San Francisco")
+        assert id_a != id_b
 
     def test_none_company_accepted(self):
-        job_id = compute_job_id(None, "Engineer")
+        job_id = compute_job_id(None, "Engineer", "Austin")
+        assert len(job_id) == 16
+
+    def test_none_city_accepted(self):
+        job_id = compute_job_id("Acme", "Engineer", None)
         assert len(job_id) == 16
 
     def test_all_none_except_title(self):
-        job_id = compute_job_id(None, "Engineer")
+        job_id = compute_job_id(None, "Engineer", None)
         assert len(job_id) == 16
 
     def test_only_hex_chars(self):
-        job_id = compute_job_id("Google", "SWE")
+        job_id = compute_job_id("Google", "SWE", "Mountain View")
         import re
         assert re.fullmatch(r"[0-9a-f]{16}", job_id) is not None
 

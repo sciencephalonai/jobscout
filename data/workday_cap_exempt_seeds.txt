@@ -1,0 +1,38 @@
+# Workday cap-exempt tenant seeds — career-site URLs for H-1B cap-exempt employers
+# (universities, academic medical centers, nonprofit research orgs).
+#
+# Format:  <career-site-url> | <type> | <Display Name>
+#   type ∈ university | hospital | nonprofit | government   (drives cap_exempt)
+#   Display Name is stamped as the job's employer (Workday listings omit it).
+#
+# Verify + emit to sources.discovered.yaml:
+#   python scripts/probe_workday.py --write-sources
+# A wrong URL just reports MISS and is not written — the prober is the verifier.
+# Find a URL by Googling "<org> careers workday" and copying the myworkdayjobs.com link.
+
+# --- Universities ---
+https://cornell.wd1.myworkdayjobs.com/en-US/cornellCareerPage      | university | Cornell University
+https://umd.wd1.myworkdayjobs.com/UMCP                             | university | University of Maryland
+https://wisconsin.wd1.myworkdayjobs.com/UW_Madison                 | university | University of Wisconsin–Madison
+https://northeastern.wd1.myworkdayjobs.com/careers                 | university | Northeastern University
+https://georgetown.wd1.myworkdayjobs.com/Georgetown_Admin_Careers  | university | Georgetown University
+https://american.wd1.myworkdayjobs.com/AU                          | university | American University
+https://uofl.wd1.myworkdayjobs.com/UofLCareerSite                  | university | University of Louisville
+https://uakron.wd1.myworkdayjobs.com/UACareers                     | university | University of Akron
+https://uasys.wd5.myworkdayjobs.com/UASYS                          | university | University of Arkansas System
+https://usnh.wd5.myworkdayjobs.com/Careers                         | university | University System of New Hampshire
+
+https://psu.wd1.myworkdayjobs.com/PSU_Staff                        | university | Penn State University
+https://osu.wd1.myworkdayjobs.com/OSUCareers                       | university | Ohio State University
+https://minnstate.wd1.myworkdayjobs.com/Minnesota_State_Careers    | university | Minnesota State
+
+# --- Academic medical centers ---
+https://massgeneralbrigham.wd1.myworkdayjobs.com/mgbexternal       | hospital   | Mass General Brigham
+https://vumc.wd1.myworkdayjobs.com/vumccareers                     | hospital   | Vanderbilt University Medical Center
+https://ccf.wd1.myworkdayjobs.com/ClevelandClinicCareers           | hospital   | Cleveland Clinic
+https://usc.wd5.myworkdayjobs.com/ExternalKeckUSCCareers           | hospital   | Keck Medicine of USC
+https://kansashealthsystem.wd1.myworkdayjobs.com/careers           | hospital   | University of Kansas Health System
+https://roswellpark.wd5.myworkdayjobs.com/ExternalCareers          | hospital   | Roswell Park Comprehensive Cancer Center
+
+# --- Nonprofit research ---
+https://rfcuny.wd108.myworkdayjobs.com/RFCUNY                      | nonprofit  | Research Foundation CUNY

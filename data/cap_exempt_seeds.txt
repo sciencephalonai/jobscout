@@ -1,0 +1,43 @@
+# Candidate cap-exempt employers (universities / hospitals / nonprofits / research)
+# for discovery + curation. These orgs can sponsor H-1B OFF the lottery (cap-exempt),
+# which matters a lot for F-1 / STEM-OPT candidates.
+#
+# Usage: feed these to scripts/discover_companies.py to probe which ATS (greenhouse/
+# lever/ashby/recruitee/smartrecruiters) each is on, then add verified slugs to
+# sources.yaml with `type: university|hospital|nonprofit`. Unverified slugs 404-skip.
+# This list is ADVISORY — verify each board before relying on it.
+#
+# --- Nonprofits / research (often on Greenhouse/Lever) ---
+givewell
+world resources institute
+mozilla foundation
+khan academy
+the bridgespan group
+wikimedia foundation
+the rockefeller foundation
+robert wood johnson foundation
+ford foundation
+chan zuckerberg initiative
+allen institute
+broad institute
+howard hughes medical institute
+internet archive
+electronic frontier foundation
+# --- Universities (mostly Workday tenants: {tenant}.wd1/wd5.myworkdayjobs.com) ---
+cornell
+stanford
+yale
+princeton
+columbia
+university of chicago
+carnegie mellon
+johns hopkins
+duke
+northwestern
+# --- Academic medical centers / hospitals (Workday/iCIMS) ---
+newyork-presbyterian
+nyu langone
+mass general brigham
+cleveland clinic
+mayo clinic
+kaiser permanente

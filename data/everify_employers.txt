@@ -1,0 +1,173 @@
+# Known E-Verify participating employers (company names enrolled in USCIS E-Verify).
+# Matched by NORMALIZED name (lowercased, punctuation/legal-suffix stripped) — exact match only.
+#
+# WHY THIS MATTERS: the 24-month STEM OPT extension legally requires the employer to be enrolled in
+# E-Verify. This flags companies KNOWN to participate so F-1/STEM-OPT candidates can prioritize them.
+#
+# CAVEAT (USCIS): there is no clean public bulk download; USCIS offers only a daily search tool and
+# states "absence does not imply a company is or isn't enrolled." So this list is CURATED + ADVISORY,
+# not exhaustive. A company NOT here may still be E-Verified — always confirm at e-verify.gov before
+# relying on it. Extend this list freely as you verify employers.
+# Source to verify/expand: https://www.e-verify.gov/e-verify-employer-search
+# This is COMPANY data (public), never personal data.
+#
+# --- Big tech (all E-Verify participants) ---
+Amazon
+Google
+Microsoft
+Meta
+Apple
+Nvidia
+Intel
+IBM
+Oracle
+Salesforce
+Adobe
+Cisco
+Qualcomm
+Uber
+Lyft
+Airbnb
+Netflix
+PayPal
+eBay
+Stripe
+Snap
+Pinterest
+Dropbox
+Block
+Twilio
+Workday
+ServiceNow
+Atlassian
+Databricks
+Snowflake
+Palantir
+VMware
+Nutanix
+Splunk
+Datadog
+Confluent
+Elastic
+MongoDB
+HashiCorp
+GitLab
+Coinbase
+Robinhood
+Plaid
+Brex
+Ramp
+Chime
+Affirm
+DoorDash
+Instacart
+Roblox
+Unity
+Reddit
+Discord
+Notion
+Figma
+Asana
+Zoom
+Tesla
+SpaceX
+Rivian
+Waymo
+Cruise
+Anduril
+OpenAI
+Anthropic
+Cohere
+Scale AI
+Perplexity
+Glean
+Pinecone
+Weaviate
+# --- Consulting / IT services (E-Verify participants — heavy STEM OPT/H-1B hirers) ---
+Cognizant
+Infosys
+Tata Consultancy Services
+Wipro
+HCL America
+Tech Mahindra
+Accenture
+Deloitte
+Ernst Young
+PwC
+KPMG
+Capgemini
+LTIMindtree
+Mphasis
+Persistent Systems
+Virtusa
+# --- Finance / fintech ---
+Goldman Sachs
+JPMorgan Chase
+Morgan Stanley
+Citadel
+Citadel Securities
+Jane Street
+Two Sigma
+DE Shaw
+Hudson River Trading
+Jump Trading
+Optiver
+Akuna Capital
+DRW
+Bank of America
+Wells Fargo
+Capital One
+American Express
+Mastercard
+Visa
+BlackRock
+Bloomberg
+# --- Pharma / biotech / health tech ---
+Pfizer
+Moderna
+Genentech
+Amgen
+Gilead Sciences
+Regeneron
+Bristol Myers Squibb
+Merck
+Eli Lilly
+AbbVie
+Illumina
+Tempus
+# --- Retail / enterprise / other frequent E-Verify employers ---
+Walmart
+Target
+Costco
+Home Depot
+Nike
+Disney
+Comcast
+Verizon
+Dell Technologies
+Hewlett Packard Enterprise
+HP
+Texas Instruments
+Micron Technology
+Broadcom
+AMD
+Applied Materials
+Lam Research
+KLA
+Analog Devices
+Marvell
+Expedia
+Booking
+Zillow
+Indeed
+Wayfair
+Chewy
+Shopify
+Samsara
+Verkada
+Flexport
+Gusto
+Rippling
+Deel
+Carta
+Benchling

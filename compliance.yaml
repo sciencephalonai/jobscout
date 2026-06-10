@@ -11,5 +11,5 @@ compliance:
 
 scrapers:
   jobspy:
-    enabled: true
-    sites: [indeed, glassdoor]
+    enabled: false
+    sites: [google, zip_recruiter]

@@ -11,7 +11,6 @@ import datetime as dt
 from typing import Any
 
 from weaviate.classes.query import Filter, MetadataQuery, Sort
-from weaviate.exceptions import WeaviateQueryError
 
 from jobscout.embed import embed_query
 from jobscout.models import Job, JobsResponse
@@ -22,12 +21,20 @@ from jobscout.store import COLLECTION_NAME, WeaviateStore, _props_to_job
 # ---------------------------------------------------------------------------
 
 DATE_PRESETS: dict[str, dt.timedelta] = {
+    "6h": dt.timedelta(hours=6),
+    "12h": dt.timedelta(hours=12),
+    "18h": dt.timedelta(hours=18),
     "24h": dt.timedelta(hours=24),
     "7d": dt.timedelta(days=7),
     "14d": dt.timedelta(days=14),
     "21d": dt.timedelta(days=21),
     "1m": dt.timedelta(days=30),
 }
+
+# Default freshness ladder for progressive lookback: widen from 6h up to 24h
+# until enough results are found. Mirrors the "start at 6h, expand to 24h max"
+# rule of a fresh-roles search agent.
+PROGRESSIVE_LADDER: list[str] = ["6h", "12h", "18h", "24h"]
 
 
 # ---------------------------------------------------------------------------
@@ -39,12 +46,19 @@ def build_filters(
     visa: list[str] | None = None,
     source: list[str] | None = None,
     company_size: list[str] | None = None,
-    employment_type: list[str] | None = None,
-    category: list[str] | None = None,
     exp: list[str] | None = None,
+    employer_type: list[str] | None = None,
+    cap_exempt: list[str] | None = None,
+    security_clearance: list[str] | None = None,
+    exclude_citizenship_required: bool = False,
+    exclude_recruiter: bool = False,
+    exclude_no_sponsorship: bool = False,
+    h1b_sponsor: bool = False,
+    everify: bool = False,
     date_range: str | None = None,
     date_from: dt.date | None = None,
     date_to: dt.date | None = None,
+    ingested_after: dt.datetime | None = None,
 ) -> Any | None:
     """Compose Weaviate ``Filter`` objects from search parameters.
 
@@ -90,12 +104,38 @@ def build_filters(
         ("visa_sponsorship", visa),
         ("source", source),
         ("company_size_bucket", company_size),
-        ("employment_type", employment_type),
-        ("category", category),
+        ("employer_type", employer_type),
+        ("security_clearance", security_clearance),
     ):
         f = _any_equal(prop, vals)
         if f is not None:
             clauses.append(f)
+
+    # Boolean exclusion filters (hard cuts).
+    if exclude_citizenship_required:
+        clauses.append(Filter.by_property("citizenship_required").equal(False))
+    if exclude_recruiter:
+        clauses.append(Filter.by_property("is_recruiter_post").equal(False))
+    # "Hide no-sponsorship": drop explicit refusals AND citizenship-required roles,
+    # but KEEP the ~96% that say nothing (visa_sponsorship == "not_mentioned").
+    if exclude_no_sponsorship:
+        clauses.append(Filter.by_property("visa_sponsorship").not_equal("no"))
+        clauses.append(Filter.by_property("citizenship_required").equal(False))
+    # Positive sponsorship signals are OR'd together (additive), then AND'd with the
+    # rest. cap-exempt (university/nonprofit), proven H-1B filer, and E-Verify
+    # employer rarely overlap, so AND-ing them would empty the list — a user enabling
+    # several wants the UNION of "any positive work-authorization signal".
+    positive = _or([
+        _any_equal("cap_exempt", cap_exempt),
+        Filter.by_property("known_h1b_sponsor").equal(True) if h1b_sponsor else None,
+        Filter.by_property("known_everify").equal(True) if everify else None,
+    ])
+    if positive is not None:
+        clauses.append(positive)
+
+    # "New since last visit" — only jobs ingested after a cutoff (saved-search alerts).
+    if ingested_after is not None:
+        clauses.append(Filter.by_property("ingested_at").greater_than(ingested_after))
 
     # Experience bands (multi-select), matched against the role's required
     # years (yoe_min). Selected bands are OR'd together.
@@ -158,7 +198,10 @@ def _fetch_facets(
     collection = store._client.collections.get(COLLECTION_NAME)
     facets: dict[str, dict[str, int]] = {}
 
-    for prop in ("visa_sponsorship", "remote_mode", "source", "company_size_bucket", "employment_type", "category"):
+    for prop in (
+        "visa_sponsorship", "remote_mode", "source", "company_size_bucket",
+        "employer_type", "cap_exempt", "security_clearance",
+    ):
         try:
             result = collection.aggregate.over_all(
                 filters=filters,
@@ -166,7 +209,7 @@ def _fetch_facets(
                 total_count=True,
             )
             facets[prop] = {
-                str(group.grouped_by.value): group.total_count
+                str(group.grouped_by.value): group.total_count or 0
                 for group in (result.groups or [])
                 if group.grouped_by is not None
             }
@@ -182,20 +225,19 @@ def _fetch_facets(
 # ---------------------------------------------------------------------------
 
 def _build_sort(sort: str) -> Any | None:
-    """Translate sort enum to a Weaviate _Sorting object for fetch_objects.
+    """Translate sort enum to a Weaviate Sort spec.
 
     - ``posted_desc``  → sort by ``posted_date`` descending
     - ``salary_desc``  → sort by ``salary_max`` descending
-    - ``relevance``    → no explicit sort (hybrid scoring)
+    - ``relevance``    → let Weaviate rank by hybrid score (no explicit sort)
 
-    Note: fetch_objects accepts a _Sorting object directly, not a list.
-    BM25/hybrid queries don't support sort at all; sort is handled in Python
-    for those paths.
+    Weaviate v4 fetch_objects expects a single Sort object, not a list.
     """
     if sort == "posted_desc":
         return Sort.by_property("posted_date", ascending=False)
     if sort == "salary_desc":
         return Sort.by_property("salary_max", ascending=False)
+    # "relevance" or any unrecognised value → default hybrid scoring
     return None
 
 
@@ -238,70 +280,26 @@ def execute_search(
     offset = (page - 1) * page_size
     sort_spec = _build_sort(sort)
 
-    def _fallback_fetch(f: Any, sp: Any) -> Any:
-        """fetch_objects fallback used when BM25/hybrid fails (e.g. stopwords)."""
-        fk: dict[str, Any] = dict(filters=f, limit=page_size, offset=offset)
-        if sp is not None:
-            fk["sort"] = sp
-        return collection.query.fetch_objects(**fk)
-
     if q and q.strip():
-        if sort_spec is not None:
-            # Weaviate BM25/hybrid queries don't accept an explicit sort
-            # parameter.  Fetch all keyword-matched objects and sort in Python.
-            try:
-                bm25_resp = collection.query.bm25(
-                    query=q.strip(),
-                    filters=filters,
-                    limit=10_000,
-                )
-            except WeaviateQueryError:
-                # Query is all stopwords — fall back to filter-only fetch.
-                bm25_resp = _fallback_fetch(filters, None)
-
-            all_jobs: list[Job] = [
-                _props_to_job(dict(o.properties), job_id=str(o.properties.get("job_id", "")))
-                for o in bm25_resp.objects
-            ]
-            sort_attr = "posted_date" if sort == "posted_desc" else "salary_max"
-
-            def _sort_key(j: Job) -> Any:
-                v = getattr(j, sort_attr, None)
-                if v is None:
-                    return dt.datetime.min.replace(tzinfo=dt.timezone.utc) if sort_attr == "posted_date" else -1
-                return v
-
-            all_jobs.sort(key=_sort_key, reverse=True)
-            total = len(all_jobs)
-            jobs = all_jobs[offset : offset + page_size]
-            facets = _fetch_facets(store, filters)
-            return JobsResponse(total=total, page=page, page_size=page_size, jobs=jobs, facets=facets)
-
-        # Relevance sort: full hybrid search.  Fall back to BM25-only if
-        # the embedding API is unavailable (rate-limit, quota, network).
-        vector: list[float] | None = None
-        effective_alpha = alpha
-        try:
-            vector = embed_query(q.strip())
-        except Exception:
-            effective_alpha = 0.0
+        # Hybrid: BM25 + pre-computed vector
+        vector = embed_query(q.strip())
 
         kwargs: dict[str, Any] = dict(
             query=q.strip(),
-            alpha=effective_alpha,
+            alpha=alpha,
+            vector=vector,
             filters=filters,
             limit=page_size,
             offset=offset,
             return_metadata=MetadataQuery(score=True, distance=True),
         )
-        if vector is not None:
-            kwargs["vector"] = vector
+        # Weaviate hybrid does not support explicit Sort alongside score
+        # ranking; only apply sort when the caller explicitly requests
+        # non-relevance ordering.
+        if sort_spec is not None and sort != "relevance":
+            kwargs["sort"] = sort_spec
 
-        try:
-            response = collection.query.hybrid(**kwargs)
-        except WeaviateQueryError:
-            # Query is all stopwords — fall back to filter-only fetch.
-            response = _fallback_fetch(filters, None)
+        response = collection.query.hybrid(**kwargs)
     else:
         # Keyword-free: plain fetch with metadata filters and optional sort
         fetch_kwargs: dict[str, Any] = dict(

@@ -1,0 +1,205 @@
+# Known H-1B sponsor companies (company names that have filed H-1B/LCA petitions).
+# Source: public US DoL OFLC LCA disclosure + USCIS H-1B Employer Data Hub (frequent filers).
+# Matched by NORMALIZED name (lowercased, punctuation/legal-suffix stripped) — exact match only,
+# so false positives are unlikely. Extend freely, or regenerate with scripts/fetch_h1b_sponsors.py.
+# This is COMPANY data (public), never personal data.
+#
+# --- Big tech / frequent top sponsors ---
+Amazon
+Google
+Microsoft
+Meta
+Apple
+Nvidia
+Intel
+IBM
+Oracle
+Salesforce
+Adobe
+Cisco
+Qualcomm
+Uber
+Lyft
+Airbnb
+Netflix
+LinkedIn
+PayPal
+eBay
+Stripe
+Snap
+Pinterest
+Dropbox
+Block
+Square
+Twilio
+Workday
+ServiceNow
+Atlassian
+Databricks
+Snowflake
+Palantir
+Palo Alto Networks
+VMware
+Nutanix
+Cloudera
+Splunk
+Datadog
+Confluent
+Elastic
+MongoDB
+HashiCorp
+GitLab
+GitHub
+Coinbase
+Robinhood
+Plaid
+Brex
+Ramp
+Chime
+Affirm
+DoorDash
+Instacart
+Roblox
+Unity
+Reddit
+Discord
+Notion
+Figma
+Asana
+Zoom
+Slack
+Twitter
+X
+Tesla
+SpaceX
+Rivian
+Lucid Motors
+Waymo
+Cruise
+Zoox
+Aurora
+Nuro
+Anduril
+OpenAI
+Anthropic
+Cohere
+Scale AI
+Hugging Face
+Mistral AI
+Perplexity
+Glean
+Adept
+Inflection AI
+Character AI
+Runway
+Pinecone
+Weaviate
+Together AI
+# --- Consulting / IT services (very high filers) ---
+Cognizant
+Infosys
+Tata Consultancy Services
+Wipro
+HCL America
+Tech Mahindra
+Accenture
+Deloitte
+Ernst Young
+PwC
+KPMG
+Capgemini
+Mindtree
+Mphasis
+LTIMindtree
+Larsen Toubro
+Persistent Systems
+Virtusa
+Syntel
+UST Global
+Hexaware
+# --- Finance / quant / fintech ---
+Goldman Sachs
+JPMorgan Chase
+Morgan Stanley
+Citadel
+Citadel Securities
+Jane Street
+Two Sigma
+DE Shaw
+Hudson River Trading
+Jump Trading
+Optiver
+IMC Trading
+Akuna Capital
+DRW
+Bank of America
+Wells Fargo
+Capital One
+American Express
+Mastercard
+Visa
+BlackRock
+Bloomberg
+Point72
+Millennium
+# --- Pharma / biotech / health tech ---
+Pfizer
+Moderna
+Genentech
+Amgen
+Gilead Sciences
+Regeneron
+Bristol Myers Squibb
+Merck
+Johnson Johnson
+Eli Lilly
+AbbVie
+Novartis
+Roche
+Illumina
+Tempus
+Recursion Pharmaceuticals
+Flatiron Health
+# --- Retail / enterprise / other frequent filers ---
+Walmart
+Target
+Costco
+Home Depot
+Nike
+Disney
+Comcast
+Verizon
+ATT
+Dell Technologies
+Hewlett Packard Enterprise
+HP
+Texas Instruments
+Micron Technology
+Broadcom
+AMD
+Applied Materials
+Lam Research
+KLA
+ASML
+Analog Devices
+Marvell
+Western Digital
+Seagate
+Expedia
+Booking
+Yelp
+Zillow
+Indeed
+Glassdoor
+Wayfair
+Chewy
+Shopify
+Twilio Segment
+Samsara
+Verkada
+Flexport
+Gusto
+Rippling
+Deel
+Carta
+Benchling

@@ -111,7 +111,7 @@ class JobSpyAdapter:
             protocol.
         """
         try:
-            from jobspy import scrape_jobs  # type: ignore[import]
+            from jobspy import scrape_jobs
         except ImportError:
             log.warning(
                 "python-jobspy is not installed — skipping JobSpyAdapter.  "

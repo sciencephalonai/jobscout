@@ -6,7 +6,7 @@ import hashlib
 import json
 import re
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Literal, cast
 
 import dateparser
 import ftfy
@@ -17,12 +17,13 @@ from jobscout.models import Job
 def fix_mojibake(s: str | None) -> str | None:
     """Repair mis-decoded UTF-8 (e.g. ``storyâ€"one`` -> ``story—one``).
 
-    Some upstream feeds serve UTF-8 that gets decoded as latin-1/cp1252,
-    producing mojibake in titles and descriptions. ``ftfy`` reverses it.
+    Some upstream feeds serve UTF-8 that gets decoded as latin-1/cp1252, producing
+    mojibake in titles and descriptions. ``ftfy`` reverses it.
     """
     if not s:
         return s
     return ftfy.fix_text(s)
+
 
 # ---------------------------------------------------------------------------
 # Regex to strip trailing legal-entity suffixes from company names
@@ -36,6 +37,22 @@ _COMPANY_SUFFIXES = re.compile(
 _PUNCT = re.compile(r"[^\w\s]", re.UNICODE)
 # Collapse runs of whitespace
 _WHITESPACE = re.compile(r"\s+")
+
+# Title-dedup helpers: drop parentheticals/brackets and work-mode qualifiers so the
+# same role reposted with cosmetic variations collapses to one dedup id.
+_PARENS = re.compile(r"\([^)]*\)|\[[^\]]*\]")
+_TITLE_QUALIFIERS = re.compile(
+    r"\b(remote|hybrid|on[- ]?site|wfh|work from home|telecommute)\b", re.IGNORECASE
+)
+
+# Free-text employment/job-type → canonical bucket.
+_EMPLOYMENT_TYPES = {
+    "full_time": ("full time", "full-time", "fulltime", "permanent", "regular"),
+    "part_time": ("part time", "part-time", "parttime"),
+    "contract": ("contract", "contractor", "freelance", "consultant", "b2b", "c2c", "1099"),
+    "internship": ("intern", "internship", "co-op", "coop", "working student", "werkstudent"),
+    "temporary": ("temporary", "temp", "seasonal", "fixed term", "fixed-term"),
+}
 
 
 def normalize_text(s: str) -> str:
@@ -58,112 +75,14 @@ def normalize_text(s: str) -> str:
     return text
 
 
-# Parenthetical/bracketed segments and work-mode words make reposts of the same
-# role look distinct ("Data Analyst (Remote)" vs "Data Analyst - Remote").
-_PARENS = re.compile(r"\([^)]*\)|\[[^\]]*\]")
-_TITLE_QUALIFIERS = re.compile(
-    r"\b(remote|hybrid|on[- ]?site|wfh|work from home|telecommute)\b", re.IGNORECASE
-)
-
-
 def normalize_title(title: str) -> str:
-    """Normalize a title for dedup: drop parentheticals and work-mode qualifiers
-    so the same role reposted with cosmetic variations collapses to one id."""
+    """Normalize a title for dedup: drop parentheticals and work-mode qualifiers so
+    the same role reposted with cosmetic variations collapses to one id."""
     if not title:
         return ""
     t = _PARENS.sub(" ", title)
     t = _TITLE_QUALIFIERS.sub(" ", t)
     return normalize_text(t)
-
-
-def compute_job_id(company: str | None, title: str) -> str:
-    """SHA256(normalize(company)|normalize_title(title))[:16].
-
-    Location is intentionally NOT part of the key: the same role posted across
-    multiple cities collapses to one job, and the individual locations are
-    aggregated onto it (see ``Job.locations``).
-    """
-    parts = "|".join(
-        [
-            normalize_text(company or ""),
-            normalize_title(title),
-        ]
-    )
-    return hashlib.sha256(parts.encode()).hexdigest()[:16]
-
-
-# ---------------------------------------------------------------------------
-# Job category derivation from title keywords
-# ---------------------------------------------------------------------------
-
-# Rules are evaluated in order; first match wins.
-_CATEGORY_RULES: list[tuple[str, list[str]]] = [
-    ("data_ml_ai", [
-        "data scientist", "data science", "machine learning", "ml engineer",
-        "ai engineer", "nlp engineer", "deep learning", "llm engineer",
-        "data engineer", "data analyst", "analytics engineer",
-        "research scientist", "applied scientist", "quantitative researcher",
-        "research engineer", "ai/ml", "ml/ai",
-    ]),
-    ("devops_infra", [
-        "devops", "site reliability engineer", "sre",
-        "infrastructure engineer", "platform engineer", "cloud engineer",
-        "reliability engineer", "build engineer", "network engineer",
-        "systems administrator", "sysadmin", "storage engineer",
-        "database administrator", "dba",
-    ]),
-    ("security", [
-        "security engineer", "security analyst", "security architect",
-        "security researcher", "cybersecurity", "infosec",
-        "penetration test", "soc analyst", "security grc",
-        "information security",
-    ]),
-    ("product_mgmt", [
-        "product manager", "product owner", "product lead",
-    ]),
-    ("design_ux", [
-        "ux designer", "ui designer", "product designer",
-        "graphic designer", "visual designer", "ux researcher",
-        "ui/ux", "user experience designer", "creative director",
-        "art director",
-    ]),
-    ("management", [
-        "engineering manager", "technical lead manager",
-        "program manager", "project manager",
-        "director", "vice president",
-        "head of", "cto", "ceo", "cfo", "cpo", "cio",
-    ]),
-    ("software_eng", [
-        "software engineer", "software developer", "full stack", "fullstack",
-        "full-stack", "frontend engineer", "frontend developer",
-        "backend engineer", "backend developer", "mobile engineer",
-        "mobile developer", "ios engineer", "ios developer",
-        "android engineer", "android developer", "web developer", "web engineer",
-        "robotic software", "simulation software",
-    ]),
-]
-
-
-def derive_category(title: str) -> str:
-    """Infer a broad job category from the title via keyword matching.
-
-    Returns one of: software_eng | data_ml_ai | devops_infra | security |
-    product_mgmt | design_ux | management | other.
-    """
-    low = title.lower()
-    for category, keywords in _CATEGORY_RULES:
-        if any(kw in low for kw in keywords):
-            return category
-    return "other"
-
-
-_EMPLOYMENT_TYPES = {
-    "full_time": ("full time", "full-time", "fulltime", "permanent", "regular"),
-    "part_time": ("part time", "part-time", "parttime"),
-    "contract": ("contract", "contractor", "freelance", "consultant", "b2b", "c2c", "1099"),
-    "internship": ("intern", "internship", "co-op", "coop", "working student", "werkstudent"),
-    "temporary": ("temporary", "temp", "seasonal", "fixed term", "fixed-term"),
-}
 
 
 def normalize_employment_type(raw: str | None) -> str:
@@ -178,6 +97,22 @@ def normalize_employment_type(raw: str | None) -> str:
         if any(n in low for n in needles):
             return bucket
     return "unknown"
+
+
+def compute_job_id(company: str | None, title: str, city: str | None) -> str:
+    """SHA256(normalize(company)|normalize_title(title)|normalize(city))[:16].
+
+    ``normalize_title`` collapses cosmetic repost variations (parentheticals,
+    "(Remote)" etc.) so the same role from multiple boards dedups to one id.
+    """
+    parts = "|".join(
+        [
+            normalize_text(company or ""),
+            normalize_title(title),
+            normalize_text(city or ""),
+        ]
+    )
+    return hashlib.sha256(parts.encode()).hexdigest()[:16]
 
 
 def parse_posted_date(
@@ -238,7 +173,7 @@ def parse_posted_date(
     return parsed.astimezone(UTC), True
 
 
-def normalize_remote(raw: str | None) -> str:
+def normalize_remote(raw: str | None) -> Literal["remote", "onsite", "hybrid", "unknown"]:
     """Map varied strings to ``remote|onsite|hybrid|unknown``."""
     if not raw:
         return "unknown"
@@ -350,27 +285,38 @@ def is_us_job(
     return False
 
 
+# Employer types a curated adapter may stamp directly (cap-exempt sourcing).
+_VALID_EMPLOYER_TYPES = {
+    "university", "hospital", "nonprofit", "government", "for_profit", "unclear",
+}
+
+
 def raw_to_job(raw: dict[str, Any], source: str) -> Job:
     """Convert a raw adapter dict to a canonical :class:`~jobscout.models.Job`.
 
     Adapters yield dicts with any combination of:
         title, company, location, city, country, remote, description, url,
-        salary_min, salary_max, salary_currency, posted_date, source_job_id
+        salary_min, salary_max, salary_currency, posted_date, source_job_id,
+        employer_type
 
-    All fields are optional **except** ``title`` and ``url``.
+    All fields are optional **except** ``title`` and ``url``.  ``employer_type``
+    lets a curated adapter (e.g. a university Workday tenant) stamp the
+    cap-exempt employer class directly instead of relying on LLM inference.
     """
     now_utc = datetime.now(UTC)
 
-    title: str = fix_mojibake(str(raw.get("title", "")).strip()) or ""
+    # Repair mojibake in human-readable text at the boundary (titles/companies/
+    # descriptions from feeds that mis-encode UTF-8).
+    title: str = (fix_mojibake(str(raw.get("title", ""))) or "").strip()
     url: str = str(raw.get("url", "")).strip()
 
     company: str | None = raw.get("company") or None
     if company:
-        company = fix_mojibake(str(company).strip()) or None
+        company = (fix_mojibake(str(company)) or "").strip() or None
 
     location_raw: str | None = raw.get("location") or None
     if location_raw:
-        location_raw = fix_mojibake(str(location_raw).strip()) or None
+        location_raw = str(location_raw).strip() or None
 
     city: str | None = raw.get("city") or None
     if city:
@@ -409,20 +355,13 @@ def raw_to_job(raw: dict[str, Any], source: str) -> Job:
     except (TypeError, ValueError):
         pass
 
-    remote_mode = normalize_remote(raw.get("remote"))
+    job_id = compute_job_id(company, title, city)
 
-    # Dedup on company + title only, so the same role posted across many cities
-    # collapses to one job (its locations are aggregated downstream at ingest).
-    job_id = compute_job_id(company, title)
-
-    employment_type = normalize_employment_type(
-        raw.get("employment_type") or raw.get("job_type") or raw.get("employment")
+    employer_type_raw = raw.get("employer_type")
+    employer_type = cast(
+        "Literal['university','hospital','nonprofit','government','for_profit','unclear']",
+        employer_type_raw if employer_type_raw in _VALID_EMPLOYER_TYPES else "unclear",
     )
-
-    category = derive_category(title)
-
-    # Seed the locations list with this posting's own location.
-    initial_locations = [location_raw] if location_raw else []
 
     return Job(
         job_id=job_id,
@@ -433,11 +372,8 @@ def raw_to_job(raw: dict[str, Any], source: str) -> Job:
         location_raw=location_raw,
         country=country,
         city=city,
-        locations=initial_locations,
-        remote_mode=remote_mode,
-        employment_type=employment_type,
-        category=category,
-        description=fix_mojibake(raw.get("description") or None),
+        remote_mode=normalize_remote(raw.get("remote")),
+        description=fix_mojibake(raw.get("description")) or None,
         url=url,
         salary_min=salary_min,
         salary_max=salary_max,
@@ -453,6 +389,8 @@ def raw_to_job(raw: dict[str, Any], source: str) -> Job:
         restrictions=None,
         skills=[],
         seniority="unclear",
+        # Curated adapters may stamp this directly; otherwise enrichment fills it.
+        employer_type=employer_type,
         enrichment_status="pending",
         raw_payload=raw_payload,
     )

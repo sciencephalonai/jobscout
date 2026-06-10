@@ -13,6 +13,10 @@ The response shape is ``{"offers": [ { ... } ]}`` where each offer carries
 / ``city`` / ``country``, ``description`` (HTML), ``requirements`` (HTML),
 ``created_at`` and ``slug``. There is no server-side keyword or location search,
 so the adapter fetches each company's full board and filters client-side.
+
+Like the other per-company ATS adapters in JobScout, ``companies`` accepts
+``{token, type}`` entries so the cap-exempt ``employer_type`` is stamped per
+company (see :func:`~jobscout.adapters.greenhouse.normalize_company_entries`).
 """
 
 from __future__ import annotations
@@ -21,8 +25,10 @@ import html
 import logging
 from collections.abc import Iterator
 from datetime import UTC, datetime
+from typing import Any
 
-from jobscout.adapters.base import CompliantHttpClient, DomainBlockedError
+from jobscout.adapters.base import CompliantHttpClient, DomainBlockedError, keyword_title_match
+from jobscout.adapters.greenhouse import normalize_company_entries
 
 log = logging.getLogger(__name__)
 
@@ -42,12 +48,10 @@ def _parse_created_at(value: str | None) -> datetime | None:
     if not raw:
         return None
 
-    # Normalise the common "... UTC" / "Z" suffixes to an ISO-parseable form.
     candidate = raw
     if candidate.endswith(" UTC"):
         candidate = candidate[: -len(" UTC")].strip()
     candidate = candidate.replace("Z", "+00:00")
-    # Recruitee uses a space between date and time; isoformat wants a "T".
     if " " in candidate and "T" not in candidate:
         candidate = candidate.replace(" ", "T", 1)
 
@@ -61,11 +65,7 @@ def _parse_created_at(value: str | None) -> datetime | None:
 
 
 def _looks_remote(offer: dict, location: str | None) -> str:
-    """Return ``"remote"`` if the offer appears remote, else ``""``.
-
-    Prefers Recruitee's explicit boolean ``remote`` flag, falling back to a
-    substring check on the location string.
-    """
+    """Return ``"remote"`` if the offer appears remote, else ``""``."""
     if offer.get("remote") is True:
         return "remote"
     if location and "remote" in location.lower():
@@ -74,34 +74,15 @@ def _looks_remote(offer: dict, location: str | None) -> str:
 
 
 class RecruiteeAdapter:
-    """Wraps the Recruitee public offers API.
-
-    Attributes
-    ----------
-    name:
-        Adapter identifier used as the ``source`` column in the DB.
-    method:
-        ``"api"`` — fetches from the official Recruitee public API.
-    risk:
-        ``"low"`` — uses an official, unauthenticated public API endpoint.
-    store_full_description:
-        ``True`` — full description text is available and stored.
-    companies:
-        List of Recruitee subdomains (company slugs) to query. Defaults to an
-        empty list.
-    """
+    """Wraps the Recruitee public offers API (per-company boards)."""
 
     name = "recruitee"
     method = "api"
     risk = "low"
     store_full_description = True
 
-    def __init__(self, companies: list[str] | None = None) -> None:
-        self.companies: list[str] = list(companies or [])
-
-    # ------------------------------------------------------------------
-    # Protocol implementation
-    # ------------------------------------------------------------------
+    def __init__(self, companies: list[Any] | None = None) -> None:
+        self.companies: list[tuple[str, str]] = normalize_company_entries(companies)
 
     def search(
         self,
@@ -111,42 +92,12 @@ class RecruiteeAdapter:
         since: datetime | None,
         http: CompliantHttpClient,
     ) -> Iterator[dict]:
-        """Yield raw job dicts from the Recruitee API.
-
-        Iterates over all configured company subdomains, fetching each board's
-        full offer list and filtering client-side until *results_wanted* jobs
-        have been yielded in total. Never raises — any per-company error is
-        logged and the loop continues with the next company.
-
-        Parameters
-        ----------
-        keywords:
-            Search terms. A job is kept only if the (space-joined,
-            case-insensitive) keyword string appears in the job title. If
-            *keywords* is empty, all jobs are kept.
-        location:
-            Unused — Recruitee has no server-side location filter and the
-            ingestion layer performs location handling downstream.
-        results_wanted:
-            Upper bound on the total number of results to yield.
-        since:
-            If given, only offers whose ``created_at`` is on or after this
-            datetime are yielded.
-        http:
-            :class:`~jobscout.adapters.base.CompliantHttpClient` instance used
-            for all HTTP requests.
-        """
+        """Yield raw job dicts from each configured Recruitee board (client-side filtered)."""
         if not self.companies:
             log.warning("RecruiteeAdapter has no companies configured — skipping")
             return
-
         if results_wanted <= 0:
             return
-
-        # Single case-insensitive needle from the keywords. Recruitee offers no
-        # server-side search, so we match this substring against the job title
-        # client-side. Empty keywords → keep everything.
-        needle = " ".join(k.strip() for k in keywords if k.strip()).lower()
 
         since_aware: datetime | None = None
         if since is not None:
@@ -154,63 +105,45 @@ class RecruiteeAdapter:
 
         total_yielded = 0
 
-        for company in self.companies:
+        for company, employer_type in self.companies:
             if total_yielded >= results_wanted:
                 break
 
             url = _BASE_URL.format(company=company)
-
             try:
-                resp = http.get(url, api_source=self.method == "api")
+                resp = http.get(url, api_source=True)
             except DomainBlockedError as exc:
-                log.warning(
-                    "Recruitee domain blocked (%s) — skipping company %s", exc, company
-                )
+                log.warning("Recruitee domain blocked (%s) — skipping company %s", exc, company)
                 continue
             except Exception as exc:  # noqa: BLE001
-                log.error(
-                    "HTTP error fetching Recruitee offers for %s: %s", company, exc
-                )
+                log.error("HTTP error fetching Recruitee offers for %s: %s", company, exc)
                 continue
 
             if resp.status_code != 200:
                 log.error(
                     "Recruitee returned HTTP %s for company=%s — skipping",
-                    resp.status_code,
-                    company,
+                    resp.status_code, company,
                 )
                 continue
 
             try:
                 data = resp.json()
             except Exception as exc:  # noqa: BLE001
-                log.error(
-                    "Failed to decode Recruitee JSON for company=%s: %s", company, exc
-                )
+                log.error("Failed to decode Recruitee JSON for company=%s: %s", company, exc)
                 continue
 
             offers: list[dict] = (data or {}).get("offers") or []
-            log.debug(
-                "Recruitee company=%s: fetched %d offers (total yielded so far: %d)",
-                company,
-                len(offers),
-                total_yielded,
-            )
 
             for offer in offers:
                 if total_yielded >= results_wanted:
                     break
-
                 try:
                     title = str(offer.get("title") or "").strip()
                     if not title:
                         continue
-
-                    # Client-side keyword filter against the title.
-                    if needle and needle not in title.lower():
+                    if not keyword_title_match(title, keywords):
                         continue
 
-                    # Client-side `since` filter on created_at.
                     created_at_raw = offer.get("created_at")
                     if since_aware is not None:
                         created_at = _parse_created_at(created_at_raw)
@@ -218,14 +151,12 @@ class RecruiteeAdapter:
                             continue
 
                     offer_id = offer.get("id")
-
-                    # Direct apply / careers page. Fall back to `url` if present.
                     apply_url = (
-                        str(offer.get("careers_url") or offer.get("url") or "").strip()
-                        or None
+                        str(offer.get("careers_url") or offer.get("url") or "").strip() or None
                     )
+                    if not apply_url:
+                        continue
 
-                    # Description (HTML) → unescape; append requirements if any.
                     description_html = offer.get("description")
                     description = (
                         html.unescape(str(description_html)) if description_html else None
@@ -237,7 +168,6 @@ class RecruiteeAdapter:
                             f"{description}\n\n{requirements}" if description else requirements
                         )
 
-                    # Location: prefer the explicit `location`, else city/country.
                     location_value = (offer.get("location") or "").strip() or None
                     if not location_value:
                         parts = [
@@ -247,27 +177,25 @@ class RecruiteeAdapter:
                         ]
                         location_value = ", ".join(p for p in parts if p) or None
 
-                    remote_value = _looks_remote(offer, location_value)
-
-                    yield {
+                    raw: dict = {
                         "title": title,
                         "company": company,
                         "url": apply_url,
                         "description": description,
                         "location": location_value,
-                        "remote": remote_value,
                         "posted_date": created_at_raw,
                         "source_job_id": str(offer_id) if offer_id is not None else None,
-                        # Native Recruitee code (e.g. "fulltime_permanent");
-                        # normalize maps it to a canonical employment type.
-                        "employment_type": offer.get("employment_type_code") or None,
+                        "employer_type": employer_type,
                     }
+                    remote_value = _looks_remote(offer, location_value)
+                    if remote_value:
+                        raw["remote"] = remote_value
+
+                    yield raw
                     total_yielded += 1
                 except Exception as exc:  # noqa: BLE001
                     log.warning(
                         "Failed to process Recruitee offer (company=%s, id=%s): %s",
-                        company,
-                        offer.get("id"),
-                        exc,
+                        company, offer.get("id"), exc,
                     )
                     continue

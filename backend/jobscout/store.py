@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import logging
+import time
 from datetime import UTC, datetime
+from typing import Any
 from urllib.parse import urlparse
 
 import weaviate
-from weaviate.classes.config import Configure, DataType, Property, Tokenization
-from weaviate.classes.init import Auth
+from weaviate.classes.config import Configure, DataType, Property
+from weaviate.classes.init import AdditionalConfig, Auth, Timeout
 from weaviate.util import generate_uuid5
 
 from jobscout.config import settings
@@ -17,6 +19,13 @@ from jobscout.models import Job
 log = logging.getLogger(__name__)
 
 COLLECTION_NAME = "Job"
+
+# Boot resilience: a transient/slow Weaviate connection must not kill startup.
+# We skip the connect-time health check (queries still surface per-request errors)
+# and retry a few times before raising the friendly error.
+_CONNECT_RETRIES = 3
+_CONNECT_BACKOFF_S = 2.0
+_INIT_TIMEOUT_S = 30
 
 
 def _job_uuid(job_id: str) -> str:
@@ -58,9 +67,13 @@ def _job_to_props(job: Job) -> dict:
         "work_auth_required": job.work_auth_required or "",
         "restrictions": job.restrictions or "",
         "company_size_bucket": job.company_size_bucket or "",
-        "employment_type": job.employment_type,
-        "category": job.category,
-        "locations": job.locations or [],
+        "security_clearance": job.security_clearance,
+        "citizenship_required": job.citizenship_required,
+        "employer_type": job.employer_type,
+        "cap_exempt": job.cap_exempt,
+        "known_h1b_sponsor": job.known_h1b_sponsor,
+        "known_everify": job.known_everify,
+        "is_recruiter_post": job.is_recruiter_post,
         "location_raw": job.location_raw or "",
         "ingested_at": _dt_or_none(job.ingested_at),
     }
@@ -109,11 +122,19 @@ def _props_to_job(props: dict, job_id: str | None = None) -> Job:
         work_auth_required=props.get("work_auth_required") or None,
         restrictions=props.get("restrictions") or None,
         company_size_bucket=props.get("company_size_bucket") or None,
-        employment_type=props.get("employment_type") or "unknown",
-        category=props.get("category") or "other",
-        locations=props.get("locations") or [],
         skills=props.get("skills") or [],
         seniority=props.get("seniority", "unclear"),
+        # Use `or default` (not .get(k, default)) because Weaviate returns
+        # objects migrated before these properties existed with the key PRESENT
+        # and value None — .get's default would not apply and Pydantic (which
+        # requires a Literal, not None) would reject the record.
+        security_clearance=props.get("security_clearance") or "unclear",
+        citizenship_required=bool(props.get("citizenship_required") or False),
+        employer_type=props.get("employer_type") or "unclear",
+        cap_exempt=props.get("cap_exempt") or "unknown",
+        known_h1b_sponsor=bool(props.get("known_h1b_sponsor") or False),
+        known_everify=bool(props.get("known_everify") or False),
+        is_recruiter_post=bool(props.get("is_recruiter_post") or False),
         enrichment_status=props.get("enrichment_status", "pending"),
         raw_payload=None,
     )
@@ -123,98 +144,118 @@ class WeaviateStore:
     """Thin wrapper around the Weaviate v4 client focused on the Job collection."""
 
     def __init__(self, url: str = settings.weaviate_url) -> None:
-        if settings.weaviate_cluster_url and settings.weaviate_api_key:
-            # Weaviate Cloud (WCD). connect_to_weaviate_cloud accepts the REST
-            # endpoint with or without a scheme and derives the gRPC endpoint.
-            cluster_url = settings.weaviate_cluster_url
-            if not cluster_url.startswith(("http://", "https://")):
-                cluster_url = f"https://{cluster_url}"
-            self._client = weaviate.connect_to_weaviate_cloud(
-                cluster_url=cluster_url,
-                auth_credentials=Auth.api_key(settings.weaviate_api_key),
-                skip_init_checks=True,
-            )
-        else:
-            parsed = urlparse(url)
-            self._client = weaviate.connect_to_local(
-                host=parsed.hostname or "localhost",
-                port=parsed.port or 8080,
-            )
-        self._ensure_collection()
+        cloud = bool(settings.weaviate_cluster_url and settings.weaviate_api_key)
+        cfg = AdditionalConfig(timeout=Timeout(init=_INIT_TIMEOUT_S))
+        last_exc: Exception | None = None
+
+        for attempt in range(1, _CONNECT_RETRIES + 1):
+            try:
+                if cloud:
+                    # Weaviate Cloud (WCD). connect_to_weaviate_cloud accepts the REST
+                    # endpoint with or without a scheme and derives the gRPC endpoint.
+                    # skip_init_checks: don't let a transient/slow boot-time health
+                    # check kill startup — queries still report errors per-request.
+                    cluster_url = settings.weaviate_cluster_url
+                    if not cluster_url.startswith(("http://", "https://")):
+                        cluster_url = f"https://{cluster_url}"
+                    self._client = weaviate.connect_to_weaviate_cloud(
+                        cluster_url=cluster_url,
+                        auth_credentials=Auth.api_key(settings.weaviate_api_key),
+                        skip_init_checks=True,
+                        additional_config=cfg,
+                    )
+                else:
+                    parsed = urlparse(url)
+                    self._client = weaviate.connect_to_local(
+                        host=parsed.hostname or "localhost",
+                        port=parsed.port or 8080,
+                        skip_init_checks=True,
+                        additional_config=cfg,
+                    )
+                self._ensure_collection()
+                return  # connected
+            except Exception as exc:  # noqa: BLE001 — retry transient failures
+                last_exc = exc
+                try:
+                    if getattr(self, "_client", None) is not None:
+                        self._client.close()
+                except Exception:  # noqa: BLE001
+                    pass
+                if attempt < _CONNECT_RETRIES:
+                    log.warning(
+                        "weaviate_connect_retry attempt=%s/%s err=%s",
+                        attempt, _CONNECT_RETRIES, exc,
+                    )
+                    time.sleep(_CONNECT_BACKOFF_S)
+
+        where = settings.weaviate_cluster_url if cloud else url
+        hint = (
+            "Check WEAVIATE_CLUSTER_URL + WEAVIATE_API_KEY in .env and that the "
+            "cluster is awake."
+            if cloud else
+            "Start it with `docker-compose up -d`, or set WEAVIATE_CLUSTER_URL + "
+            "WEAVIATE_API_KEY in .env to use Weaviate Cloud."
+        )
+        raise RuntimeError(
+            f"Could not connect to Weaviate at {where} after {_CONNECT_RETRIES} attempts. "
+            f"{hint} (original error: {type(last_exc).__name__}: {last_exc})"
+        ) from last_exc
 
     # ------------------------------------------------------------------
     # Schema bootstrap
     # ------------------------------------------------------------------
 
     def _ensure_collection(self) -> None:
-        """Create the Job collection, recreating it if the schema is stale.
-
-        Categorical (enum) properties use Tokenization.FIELD so that exact-match
-        filters on values like "no", "yes", "remote" are never stripped as BM25
-        stopwords.  If the collection exists but was created with the old word
-        tokenizer, it is dropped and recreated automatically — data is
-        re-ingested on the next ingestion run.
-        """
+        """Create the Job collection if it doesn't already exist."""
         if self._client.collections.exists(COLLECTION_NAME):
-            # Check whether the existing collection has the correct tokenization.
-            # If visa_sponsorship uses word tokenization (the old default), drop
-            # and recreate so filters work correctly.
-            try:
-                col = self._client.collections.get(COLLECTION_NAME)
-                props = {p.name: p for p in col.config.get().properties}
-                vp = props.get("visa_sponsorship")
-                if vp is not None and getattr(vp, "tokenization", None) != Tokenization.FIELD:
-                    log.warning(
-                        "Job collection has stale tokenization — recreating. "
-                        "Data will be re-ingested on next run."
-                    )
-                    self._client.collections.delete(COLLECTION_NAME)
-                else:
-                    self._migrate_collection()
-                    return
-            except Exception:
-                self._migrate_collection()
-                return
-
-        # Categorical enum properties use FIELD tokenization so that
-        # short values ("no", "yes", "remote") are never dropped as stopwords.
-        def _kw(name: str, **kw: object) -> Property:
-            return Property(name=name, data_type=DataType.TEXT,
-                            tokenization=Tokenization.FIELD, **kw)
+            self._migrate_collection()
+            return
 
         self._client.collections.create(
             name=COLLECTION_NAME,
             vectorizer_config=Configure.Vectorizer.none(),
+            # index_null_state lets filters use is_none() — build_filters() emits
+            # `yoe_min IS NULL OR yoe_min <= X` so jobs with unknown YoE are kept.
             inverted_index_config=Configure.inverted_index(index_null_state=True),
             properties=[
-                Property(name="job_id", data_type=DataType.TEXT,
-                         tokenization=Tokenization.FIELD, skip_vectorization=True),
+                Property(
+                    name="job_id",
+                    data_type=DataType.TEXT,
+                    skip_vectorization=True,
+                ),
                 Property(name="title", data_type=DataType.TEXT),
                 Property(name="company", data_type=DataType.TEXT),
                 Property(name="description", data_type=DataType.TEXT),
                 Property(name="city", data_type=DataType.TEXT),
                 Property(name="country", data_type=DataType.TEXT),
-                _kw("remote_mode"),
-                _kw("visa_sponsorship"),
+                Property(name="remote_mode", data_type=DataType.TEXT),
+                Property(name="visa_sponsorship", data_type=DataType.TEXT),
                 Property(name="yoe_min", data_type=DataType.INT),
                 Property(name="yoe_max", data_type=DataType.INT),
-                _kw("seniority"),
-                _kw("source"),
+                Property(name="seniority", data_type=DataType.TEXT),
+                Property(name="source", data_type=DataType.TEXT),
                 Property(name="posted_date", data_type=DataType.DATE),
                 Property(name="posted_date_est", data_type=DataType.BOOL),
                 Property(name="salary_min", data_type=DataType.NUMBER),
                 Property(name="salary_max", data_type=DataType.NUMBER),
-                _kw("salary_currency"),
-                Property(name="url", data_type=DataType.TEXT,
-                         tokenization=Tokenization.FIELD, skip_vectorization=True),
+                Property(name="salary_currency", data_type=DataType.TEXT),
+                Property(
+                    name="url",
+                    data_type=DataType.TEXT,
+                    skip_vectorization=True,
+                ),
                 Property(name="skills", data_type=DataType.TEXT_ARRAY),
-                _kw("enrichment_status"),
+                Property(name="enrichment_status", data_type=DataType.TEXT),
                 Property(name="work_auth_required", data_type=DataType.TEXT),
                 Property(name="restrictions", data_type=DataType.TEXT),
-                _kw("company_size_bucket"),
-                _kw("employment_type"),
-                _kw("category"),
-                Property(name="locations", data_type=DataType.TEXT_ARRAY),
+                Property(name="company_size_bucket", data_type=DataType.TEXT),
+                Property(name="security_clearance", data_type=DataType.TEXT),
+                Property(name="citizenship_required", data_type=DataType.BOOL),
+                Property(name="employer_type", data_type=DataType.TEXT),
+                Property(name="cap_exempt", data_type=DataType.TEXT),
+                Property(name="known_h1b_sponsor", data_type=DataType.BOOL),
+                Property(name="known_everify", data_type=DataType.BOOL),
+                Property(name="is_recruiter_post", data_type=DataType.BOOL),
                 Property(name="location_raw", data_type=DataType.TEXT),
                 Property(name="ingested_at", data_type=DataType.DATE),
             ],
@@ -231,21 +272,26 @@ class WeaviateStore:
             existing = {p.name for p in collection.config.get().properties}
         except Exception:
             return
-        missing = [
+        # Properties that may be missing from an older collection. Adding a
+        # property to an existing collection is non-destructive in Weaviate.
+        _MIGRATIONS: list[tuple[str, DataType]] = [
             ("company_size_bucket", DataType.TEXT),
-            ("employment_type", DataType.TEXT),
-            ("locations", DataType.TEXT_ARRAY),
-            ("category", DataType.TEXT),
+            ("security_clearance", DataType.TEXT),
+            ("citizenship_required", DataType.BOOL),
+            ("employer_type", DataType.TEXT),
+            ("cap_exempt", DataType.TEXT),
+            ("known_h1b_sponsor", DataType.BOOL),
+            ("known_everify", DataType.BOOL),
+            ("is_recruiter_post", DataType.BOOL),
         ]
-        for prop_name, dtype in missing:
-            if prop_name not in existing:
-                try:
-                    collection.config.add_property(
-                        Property(name=prop_name, data_type=dtype)
-                    )
-                    log.info("migrated Job collection: added %s", prop_name)
-                except Exception:
-                    log.warning("could not add %s property", prop_name, exc_info=True)
+        for name, data_type in _MIGRATIONS:
+            if name in existing:
+                continue
+            try:
+                collection.config.add_property(Property(name=name, data_type=data_type))
+                log.info("migrated Job collection: added %s", name)
+            except Exception:
+                log.warning("could not add %s property", name, exc_info=True)
 
     # ------------------------------------------------------------------
     # CRUD
@@ -307,6 +353,60 @@ class WeaviateStore:
                     vector=vector,
                 )
 
+    def search_near_vector(
+        self,
+        vector: list[float],
+        filters: Any | None = None,
+        limit: int = 5,
+    ) -> list[Job]:
+        """Pure vector nearest-neighbour search (used by resume matching).
+
+        Embeds nothing itself — the caller passes a query vector (e.g. an
+        embedded resume). The same metadata ``filters`` used for keyword search
+        apply here, so resume matching honours the same eligibility cuts.
+        """
+        collection = self._client.collections.get(COLLECTION_NAME)
+        response = collection.query.near_vector(
+            near_vector=vector,
+            limit=limit,
+            filters=filters,
+        )
+        jobs: list[Job] = []
+        for obj in response.objects:
+            props = dict(obj.properties)
+            jobs.append(_props_to_job(props, job_id=str(props.get("job_id", ""))))
+        return jobs
+
+    def near_vector_scores(
+        self,
+        vector: list[float],
+        filters: Any | None = None,
+        limit: int = 500,
+    ) -> dict[str, float]:
+        """Return {job_id: similarity 0–1} for the nearest jobs to *vector*.
+
+        Used to blend semantic resume↔job similarity into the match score. Cosine
+        distance d∈[0,2] → similarity = 1 - d/2. Jobs beyond ``limit`` get no entry
+        (the caller treats missing as 'no semantic signal').
+        """
+        from weaviate.classes.query import MetadataQuery
+
+        collection = self._client.collections.get(COLLECTION_NAME)
+        response = collection.query.near_vector(
+            near_vector=vector,
+            limit=limit,
+            filters=filters,
+            return_metadata=MetadataQuery(distance=True),
+        )
+        scores: dict[str, float] = {}
+        for obj in response.objects:
+            jid = str(dict(obj.properties).get("job_id", ""))
+            if not jid:
+                continue
+            dist = getattr(obj.metadata, "distance", None)
+            scores[jid] = max(0.0, min(1.0, 1.0 - dist / 2)) if dist is not None else 0.5
+        return scores
+
     def get_by_id(self, job_id: str) -> Job | None:
         """Fetch a single Job by its 16-char dedup hash. Returns None if not found."""
         uid = _job_uuid(job_id)
@@ -320,30 +420,24 @@ class WeaviateStore:
         return _props_to_job(dict(obj.properties), job_id=job_id)
 
     def purge_older_than(self, cutoff: datetime) -> int:
-        """Delete all jobs whose posted_date (or ingested_at when date is unknown) is before *cutoff*.
-
-        Returns the number of objects deleted.
-        """
+        """Delete jobs whose ``posted_date`` (or ``ingested_at`` when date is unknown)
+        is before *cutoff*. Returns the number of objects deleted. Explicit cleanup
+        only — never called automatically."""
         from weaviate.classes.query import Filter
 
         collection = self._client.collections.get(COLLECTION_NAME)
         deleted = 0
-
-        # 1. Jobs with a known posted_date that is too old.
-        result = collection.data.delete_many(
+        r1 = collection.data.delete_many(
             where=Filter.by_property("posted_date").less_than(cutoff)
         )
-        deleted += result.successful if result.successful else 0
-
-        # 2. Jobs with no posted_date but ingested more than a month ago.
-        result2 = collection.data.delete_many(
+        deleted += r1.successful or 0
+        r2 = collection.data.delete_many(
             where=(
                 Filter.by_property("posted_date").is_none(True)
                 & Filter.by_property("ingested_at").less_than(cutoff)
             )
         )
-        deleted += result2.successful if result2.successful else 0
-
+        deleted += r2.successful or 0
         return deleted
 
     def close(self) -> None:

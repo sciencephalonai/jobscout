@@ -18,8 +18,10 @@ from __future__ import annotations
 import logging
 from collections.abc import Iterator
 from datetime import UTC, datetime
+from typing import Any
 
-from jobscout.adapters.base import CompliantHttpClient, DomainBlockedError
+from jobscout.adapters.base import CompliantHttpClient, DomainBlockedError, keyword_title_match
+from jobscout.adapters.greenhouse import normalize_company_entries
 from jobscout.normalize import normalize_remote
 
 log = logging.getLogger(__name__)
@@ -41,7 +43,8 @@ class LeverAdapter:
     store_full_description:
         ``True`` — full description text (``descriptionPlain``) is stored.
     companies:
-        List of Lever account slugs to query (e.g. ``["spotify"]``).
+        List of Lever account entries — each a slug string or a
+        ``{token, type}`` dict. Stored as ``(slug, employer_type)`` pairs.
         Defaults to an empty list.
     """
 
@@ -50,8 +53,8 @@ class LeverAdapter:
     risk = "low"
     store_full_description = True
 
-    def __init__(self, companies: list[str] | None = None) -> None:
-        self.companies: list[str] = list(companies or [])
+    def __init__(self, companies: list[Any] | None = None) -> None:
+        self.companies: list[tuple[str, str]] = normalize_company_entries(companies)
 
     # ------------------------------------------------------------------
     # Protocol implementation
@@ -89,7 +92,6 @@ class LeverAdapter:
         if results_wanted <= 0:
             return
 
-        query = " ".join(k.strip() for k in keywords if k.strip()).lower()
 
         # Ensure `since` is timezone-aware for comparison.
         since_aware: datetime | None = None
@@ -98,7 +100,7 @@ class LeverAdapter:
 
         total_yielded = 0
 
-        for company in self.companies:
+        for company, employer_type in self.companies:
             if total_yielded >= results_wanted:
                 break
 
@@ -140,7 +142,7 @@ class LeverAdapter:
             for posting in data:
                 if total_yielded >= results_wanted:
                     break
-                job = self._normalise(posting, slug, query, since_aware)
+                job = self._normalise(posting, slug, keywords, since_aware, employer_type)
                 if job is not None:
                     yield job
                     total_yielded += 1
@@ -160,8 +162,9 @@ class LeverAdapter:
     def _normalise(
         posting: dict,
         company: str,
-        query: str,
+        keywords: list[str],
         since: datetime | None,
+        employer_type: str = "unclear",
     ) -> dict | None:
         """Convert a raw Lever posting to the JobScout canonical shape.
 
@@ -176,7 +179,7 @@ class LeverAdapter:
                 return None
 
             # Client-side keyword filter (case-insensitive substring on title).
-            if query and query not in title.lower():
+            if not keyword_title_match(title, keywords):
                 return None
 
             # createdAt is epoch milliseconds (int) → tz-aware UTC datetime.
@@ -193,9 +196,6 @@ class LeverAdapter:
 
             categories = posting.get("categories") or {}
             location = (categories.get("location") or "").strip() or None
-            # Native Lever commitment (e.g. "Full-time", "Intern", "Contract");
-            # normalize maps it to a canonical employment type.
-            commitment = (categories.get("commitment") or "").strip() or None
 
             job: dict = {
                 "title": title,
@@ -205,7 +205,7 @@ class LeverAdapter:
                 "location": location,
                 "posted_date": posted_date,
                 "source_job_id": str(posting["id"]) if posting.get("id") is not None else None,
-                "employment_type": commitment,
+                "employer_type": employer_type,
             }
 
             # Only set `remote` when the location looks remote; otherwise leave unset.

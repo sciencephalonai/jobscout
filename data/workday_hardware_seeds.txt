@@ -1,0 +1,14 @@
+# Hardware / semiconductor Workday tenants — high H-1B filers, NOT defense primes
+# Format: https://{tenant}.{region}.myworkdayjobs.com/{site}
+# probe_workday.py will verify each and add only those that return jobs.
+https://nvidia.wd5.myworkdayjobs.com/NVIDIAExternalCareerSite
+https://intel.wd1.myworkdayjobs.com/External
+https://amd.wd1.myworkdayjobs.com/External
+https://qualcomm.wd5.myworkdayjobs.com/External
+https://texasinstruments.wd1.myworkdayjobs.com/TIExternalSite
+https://broadcom.wd1.myworkdayjobs.com/External
+https://amat.wd1.myworkdayjobs.com/External
+https://marvell.wd1.myworkdayjobs.com/External
+https://lamresearch.wd1.myworkdayjobs.com/Lam_Careers
+https://kla.wd1.myworkdayjobs.com/Search
+https://asml.wd3.myworkdayjobs.com/External

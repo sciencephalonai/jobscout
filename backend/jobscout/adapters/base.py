@@ -22,6 +22,22 @@ import yaml
 
 log = logging.getLogger(__name__)
 
+
+def keyword_title_match(title: str, keywords: list[str]) -> bool:
+    """True if *title* matches the keyword filter for client-side ATS adapters.
+
+    Empty keywords → keep everything. Otherwise match if **any** keyword appears
+    in the title (case-insensitive). Replaces the old ``" ".join(keywords)`` single
+    needle, which made multi-keyword searches match nothing (e.g. the joined string
+    "data engineer software engineer" is never a substring of a real title).
+    """
+    kws = [k.strip().lower() for k in keywords if k and k.strip()]
+    if not kws:
+        return True
+    t = (title or "").lower()
+    return any(k in t for k in kws)
+
+
 USER_AGENT = "JobScoutBot/1.0 (+https://example.com/about-jobscout)"
 DEFAULT_DELAY = 3.0          # seconds between requests to the same domain
 ROBOTS_TTL = 86_400.0        # re-fetch robots.txt after 24 hours
@@ -197,6 +213,44 @@ class CompliantHttpClient:
         skipped, but the blocklist and a default rate limit still apply. Pass it
         from adapters whose ``method == "api"``.
         """
+        return self._send("GET", url, api_source=api_source, params=params)
+
+    def post(
+        self,
+        url: str,
+        json: dict | None = None,
+        *,
+        api_source: bool = False,
+        headers: dict | None = None,
+    ) -> httpx.Response:
+        """Perform a POST request, enforcing the same compliance rules as ``get``.
+
+        Used by JSON-API adapters such as Workday whose job-search endpoint is a
+        POST. The request body is sent as JSON (httpx sets ``Content-Type:
+        application/json``). All blocklist / robots.txt / rate-limit / backoff
+        behaviour is identical to ``get`` — adapters still cannot make raw
+        requests.
+        """
+        return self._send(
+            "POST", url, api_source=api_source, json=json, headers=headers
+        )
+
+    def _send(
+        self,
+        method: str,
+        url: str,
+        *,
+        api_source: bool = False,
+        params: dict | None = None,
+        json: dict | None = None,
+        headers: dict | None = None,
+    ) -> httpx.Response:
+        """Shared compliance + backoff path for ``get`` and ``post``.
+
+        Runs the blocklist/robots checks, the per-domain rate limit, and the
+        429/503 exponential-backoff retry loop, then issues ``method`` via the
+        underlying httpx session (``params`` for GET, ``json``/``headers`` for POST).
+        """
         parsed = urlparse(url)
         domain = parsed.netloc or parsed.path  # fallback for unusual URLs
 
@@ -222,7 +276,9 @@ class CompliantHttpClient:
                 time.sleep(backoff_secs)
 
             try:
-                resp = self._session.get(url, params=params)
+                resp = self._session.request(
+                    method, url, params=params, json=json, headers=headers
+                )
             except httpx.RequestError as exc:
                 last_exc = exc
                 log.warning("Request error for %s: %s", url, exc)
@@ -241,7 +297,7 @@ class CompliantHttpClient:
                 if attempt < len(BACKOFF):
                     continue
                 # Exhausted all retries
-                raise last_exc  # type: ignore[misc]
+                raise last_exc
 
             # Success (any non-429/503 status)
             return resp
@@ -249,7 +305,7 @@ class CompliantHttpClient:
         # Should be unreachable, but satisfy type checker
         if last_exc:
             raise last_exc
-        raise RuntimeError(f"Failed to GET {url} after {len(BACKOFF) + 1} attempts")
+        raise RuntimeError(f"Failed to {method} {url} after {len(BACKOFF) + 1} attempts")
 
     def close(self) -> None:
         self._session.close()

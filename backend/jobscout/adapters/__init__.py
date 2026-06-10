@@ -17,9 +17,12 @@ from jobscout.adapters.lever import LeverAdapter
 from jobscout.adapters.recruitee import RecruiteeAdapter
 from jobscout.adapters.remoteok import RemoteOKAdapter
 from jobscout.adapters.remotive import RemotiveAdapter
+from jobscout.adapters.rippling import RipplingAdapter
+from jobscout.adapters.rss import RssAdapter
 from jobscout.adapters.smartrecruiters import SmartRecruitersAdapter
 from jobscout.adapters.themuse import TheMuseAdapter
 from jobscout.adapters.workable import WorkableAdapter
+from jobscout.adapters.workday import WorkdayAdapter
 from jobscout.adapters.workingnomads import WorkingNomadsAdapter
 
 __all__ = [
@@ -34,8 +37,11 @@ __all__ = [
     "RecruiteeAdapter",
     "RemoteOKAdapter",
     "RemotiveAdapter",
+    "RipplingAdapter",
+    "RssAdapter",
     "SmartRecruitersAdapter",
     "TheMuseAdapter",
     "WorkableAdapter",
+    "WorkdayAdapter",
     "WorkingNomadsAdapter",
 ]

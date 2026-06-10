@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import type { JobFilters } from '../types'
+import { useActiveProfile } from '../ProfileContext'
 
 interface SearchBarProps {
   filters: JobFilters
@@ -7,12 +8,14 @@ interface SearchBarProps {
 }
 
 const SORT_OPTIONS = [
+  { value: 'match', label: 'Best Match' },
   { value: 'relevance', label: 'Most Relevant' },
   { value: 'posted_desc', label: 'Newest First' },
   { value: 'salary_desc', label: 'Highest Salary' },
 ]
 
 export default function SearchBar({ filters, onFilterChange }: SearchBarProps) {
+  const { activeProfileId } = useActiveProfile()
   const [inputValue, setInputValue] = useState(filters.q ?? '')
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -102,6 +105,11 @@ export default function SearchBar({ filters, onFilterChange }: SearchBarProps) {
           </option>
         ))}
       </select>
+      {filters.sort === 'match' && !activeProfileId && (
+        <span className="self-center text-xs text-amber-600">
+          Pick a profile (top bar) to rank by match
+        </span>
+      )}
     </form>
   )
 }

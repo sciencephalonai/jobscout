@@ -14,12 +14,8 @@ sources:
   jobicy:
     enabled: true            # free public API, no key, remote jobs
 
-  jobrightai:
-    enabled: true            # SSR JSON extraction from /jobs/* (robots.txt allows)
-
   remoteok:
-    enabled: false           # disabled: apply links resolve to a blank JS-only
-                             # page on remoteok.com (no usable employer link)
+    enabled: true            # free public API, no key (attribution via job URL)
 
   workingnomads:
     enabled: true            # free public API, no key, remote jobs
@@ -32,6 +28,16 @@ sources:
     # Each company: board token + employee-count bucket (exact value used by the
     # company-size filter; LLM enrichment estimates size for other sources).
     companies:
+      # Cap-exempt nonprofit / research orgs FIRST so a bounded/quota-limited ingest
+      # reaches them before the large for-profit boards (they're the scarce signal).
+      # type=nonprofit → cap_exempt derived "likely" (can sponsor H-1B off-lottery).
+      # VERIFIED live via direct probe (counts noted); tech-forward orgs w/ eng+data roles.
+      - {token: givewell, size: "51-200", type: nonprofit}      # (14 jobs)
+      - {token: wri, size: "1001-5000", type: nonprofit}        # World Resources Institute (1)
+      - {token: mozilla, size: "1001-5000", type: nonprofit}    # Mozilla (39 jobs)
+      - {token: khanacademy, size: "201-500", type: nonprofit}  # Khan Academy (27 jobs)
+      # (thebridgespangroup removed — Greenhouse board 404s.)
+      # For-profit boards (large, mostly already-ingested → cheap reuse).
       - {token: stripe, size: "5000+"}
       - {token: databricks, size: "1001-5000"}
       - {token: gitlab, size: "1001-5000"}
@@ -56,43 +62,88 @@ sources:
       - {token: spotify, size: "5000+"}
       - {token: netflix, size: "5000+"}
 
-  # --- ATS platforms (per-company, no key, DIRECT employer apply links) ---
   ashby:
-    enabled: true            # api.ashbyhq.com posting API
+    enabled: true            # public Ashby posting API, no key; per-company boards (startups)
+    # Each company: Ashby job-board slug (from jobs.ashbyhq.com/{slug}) + employer_type.
+    # Verified live via scripts/smoke_adapters.py (ramp → 111 jobs). Mostly for-profit startups;
+    # tag any cap-exempt org as nonprofit/university. Populate at scale via discover_companies.py.
     companies:
-      - {token: openai, size: "1001-5000"}
+      - {token: ramp, type: for_profit, size: "501-1000"}
+      - {token: openai, type: for_profit, size: "1001-5000"}   # verified US board
 
   workable:
-    enabled: true            # apply.workable.com widget API
-    # Verified US-jobs slugs (zego dropped — UK-only).
-    companies:
-      - {token: "mlabs", size: "51-200"}
-      - {token: "cynet-corp", size: "51-200"}
-      - {token: "33usa", size: "1-50"}
-      - {token: "dof", size: "201-500"}
-      - {token: "m-files", size: "201-500"}
-      - {token: "nogigiddy", size: "51-200"}   # high US volume (gig roles; many near-dup reposts)
+    enabled: true            # public widget API (?details=true), no key
+    # Each account: Workable subdomain slug + employer_type for cap-exempt stamping.
+    # Verified live via scripts/smoke_adapters.py (braven → 60 US jobs incl. SWE).
+    accounts:
+      - {token: braven, type: nonprofit}      # US nonprofit (education access)
+      # Verified US-jobs slugs (zego dropped — UK-only):
+      - {token: mlabs, type: for_profit, size: "51-200"}
+      - {token: cynet-corp, type: for_profit, size: "51-200"}
+      - {token: 33usa, type: for_profit, size: "1-50"}
+      - {token: dof, type: for_profit, size: "201-500"}
+      - {token: m-files, type: for_profit, size: "201-500"}
+      - {token: nogigiddy, type: for_profit, size: "51-200"}   # high US volume (gig roles)
 
-  smartrecruiters:
-    enabled: true            # api.smartrecruiters.com postings API
+  workday:
+    enabled: true            # public CXS API; universities / academic medical centers / nonprofits (cap-exempt)
+    fetch_descriptions: true # one extra request per job for the full description
+    # Curated tenants: {tenant, region (wd1/wd5/wd12/…), site, type, name}. `name`
+    # is the employer label stamped onto jobs (Workday listings omit it). Each
+    # tenant is a distinct domain whose robots.txt is checked independently.
+    # Add more with: python scripts/probe_workday.py --write-sources
+    tenants:
+      - {tenant: cornell, region: wd1,  site: cornellCareerPage,        type: university, name: Cornell University}
+      - {tenant: nyp,     region: wd1,  site: nypcareers,               type: hospital,   name: NewYork-Presbyterian}
+      - {tenant: nyuhs,   region: wd12, site: nyuhscareers1,            type: hospital,   name: NYU Langone Health}
+      - {tenant: trumed,  region: wd1,  site: TMC_External_Career_Site, type: hospital,   name: Truman Medical Centers}
+
+  rippling:
+    enabled: false           # public Rippling ATS Job Board API, no key; per-company boards
+    fetch_descriptions: true # one extra request per job for the full description
+    # Each company: Rippling board slug (from ats.rippling.com/{slug}) + employer_type.
+    # Tag cap-exempt orgs that host on Rippling as nonprofit/university; for-profit → cap_exempt "no".
     companies:
-      - {token: Visa, size: "5000+"}
+      - {token: tavernresearch, type: for_profit}
 
   recruitee:
-    enabled: true            # {company}.recruitee.com offers API
-    # Verified US-jobs slugs (tether dropped — global/crypto, non-US).
+    enabled: true            # public Recruitee offers API, no key; per-company boards
+    # Each company: Recruitee subdomain (from {slug}.recruitee.com) + employer_type.
     companies:
-      - {token: "altiussearchgroup", size: "51-200"}
-      - {token: "anywhereworks", size: "201-500"}
-      - {token: "greatminds", size: "201-500"}
-      - {token: "kravet", size: "201-500"}
-      - {token: "nucsai", size: "1-50"}
+      - {token: tether, type: for_profit}
+      # Verified US-jobs slugs:
+      - {token: altiussearchgroup, type: for_profit, size: "51-200"}
+      - {token: anywhereworks, type: for_profit, size: "201-500"}
+      - {token: greatminds, type: for_profit, size: "201-500"}
+      - {token: kravet, type: for_profit, size: "201-500"}
+      - {token: nucsai, type: for_profit, size: "1-50"}
 
-  jobspy:
-    enabled: true            # scrapes Indeed and Glassdoor (high risk — explicit opt-in)
-    sites: [indeed, glassdoor]
-    hours_old: 168
+  smartrecruiters:
+    enabled: true            # public SmartRecruiters Posting API; reaches bigger firms
+    fetch_descriptions: true # one extra request per job for the full description
+    # Each company: SmartRecruiters company identifier (e.g. Visa, ServiceNow, Bosch).
+    companies:
+      - {token: Visa, type: for_profit}
+      - {token: ServiceNow, type: for_profit}
 
   rss:
-    enabled: false
+    enabled: false           # generic RSS adapter — feeds below are EXAMPLES only
+    # WARNING: HigherEdJobs serves an EMPTY feed to our honest JobScoutBot
+    # User-Agent (verified: 0 entries via scripts/smoke_adapters.py); it appears
+    # to gate RSS on a browser UA, and we will not spoof it (compliance rule).
+    # So HigherEdJobs is effectively unusable here. Point this adapter at job
+    # feeds that serve all clients (e.g. an institution's own career-page RSS).
+    # Each feed: {url, type}. HigherEdJobs tech catIDs (if it ever opens up) —
+    # 290 Data Science, 102 Computer Science, 159 Software Engineer, 161 IT, 211 DBA.
     feeds: []
+
+  jobrightai:
+    enabled: false           # keyword aggregator (jobright.ai SSR __NEXT_DATA__ JSON).
+    # Good aggregated collection (even annotates H-1B status), but FRAGILE — it parses
+    # embedded page JSON that can change without notice, so it ships OFF and must never
+    # be a load-bearing source. Smoke-test + re-validate before enabling.
+
+  jobspy:
+    enabled: false           # opt-in; scrapes LinkedIn/Indeed/Glassdoor (high risk)
+    sites: [google, zip_recruiter]
+    hours_old: 168

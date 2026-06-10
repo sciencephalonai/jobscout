@@ -1,0 +1,123 @@
+# AUTO-GENERATED (workday tenants by scripts/probe_workday.py; other ATS by
+# discover_companies.py). Merged into sources.yaml at load. Safe to regenerate.
+sources:
+  greenhouse:
+    companies:
+    - token: khanacademy
+      type: for_profit
+    - token: chanzuckerberginitiative
+      type: for_profit
+    - token: givewell
+      type: for_profit
+  workday:
+    tenants:
+    - tenant: cornell
+      region: wd1
+      site: cornellCareerPage
+      type: university
+      name: Cornell University
+    - tenant: umd
+      region: wd1
+      site: UMCP
+      type: university
+      name: University of Maryland
+    - tenant: wisconsin
+      region: wd1
+      site: UW_Madison
+      type: university
+      name: "University of Wisconsin\u2013Madison"
+    - tenant: northeastern
+      region: wd1
+      site: careers
+      type: university
+      name: Northeastern University
+    - tenant: georgetown
+      region: wd1
+      site: Georgetown_Admin_Careers
+      type: university
+      name: Georgetown University
+    - tenant: american
+      region: wd1
+      site: AU
+      type: university
+      name: American University
+    - tenant: uofl
+      region: wd1
+      site: UofLCareerSite
+      type: university
+      name: University of Louisville
+    - tenant: uakron
+      region: wd1
+      site: UACareers
+      type: university
+      name: University of Akron
+    - tenant: usnh
+      region: wd5
+      site: Careers
+      type: university
+      name: University System of New Hampshire
+    - tenant: vumc
+      region: wd1
+      site: vumccareers
+      type: hospital
+      name: Vanderbilt University Medical Center
+    - tenant: rfcuny
+      region: wd108
+      site: RFCUNY
+      type: nonprofit
+      name: Research Foundation CUNY
+    - tenant: uasys
+      region: wd5
+      site: UASYS
+      type: university
+      name: University of Arkansas System
+    - tenant: psu
+      region: wd1
+      site: PSU_Staff
+      type: university
+      name: Penn State University
+    - tenant: osu
+      region: wd1
+      site: OSUCareers
+      type: university
+      name: Ohio State University
+    - tenant: ccf
+      region: wd1
+      site: ClevelandClinicCareers
+      type: hospital
+      name: Cleveland Clinic
+    - tenant: usc
+      region: wd5
+      site: ExternalKeckUSCCareers
+      type: hospital
+      name: Keck Medicine of USC
+    - tenant: kansashealthsystem
+      region: wd1
+      site: careers
+      type: hospital
+      name: University of Kansas Health System
+    - tenant: roswellpark
+      region: wd5
+      site: ExternalCareers
+      type: hospital
+      name: Roswell Park Comprehensive Cancer Center
+    - tenant: nvidia
+      region: wd5
+      site: NVIDIAExternalCareerSite
+      type: for_profit
+      name: NVIDIA
+    - tenant: intel
+      region: wd1
+      site: External
+      type: for_profit
+      name: Intel
+    - tenant: amat
+      region: wd1
+      site: External
+      type: for_profit
+      name: Applied Materials
+    - tenant: kla
+      region: wd1
+      site: Search
+      type: for_profit
+      name: KLA

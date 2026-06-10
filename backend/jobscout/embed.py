@@ -1,7 +1,9 @@
-"""Embedding helpers using Google text-embedding-005.
+"""Embedding helpers using the Google Gemini embedding API.
 
-All functions are synchronous. The embedding model and API key are pulled from
-``jobscout.config.settings`` so there is a single source of truth.
+All functions are synchronous. The embedding model (e.g. ``gemini-embedding-001``)
+and API key are pulled from ``jobscout.config.settings`` so there is a single
+source of truth. Note: ``text-embedding-005`` is a Vertex-only model name and is
+NOT served by the Gemini API — use a ``gemini-embedding-*`` model.
 """
 
 from __future__ import annotations
@@ -9,6 +11,41 @@ from __future__ import annotations
 import google.generativeai as genai
 
 from jobscout.config import settings
+
+
+class EmbeddingQuotaError(RuntimeError):
+    """Raised when the embedding provider rejects a call for quota/rate-limit
+    reasons (e.g. Gemini free tier = 1,000 embeds/day). Callers can catch this to
+    stop an ingest cleanly and surface a clear message instead of dropping jobs
+    silently."""
+
+
+def _is_quota_error(exc: Exception) -> bool:
+    """True if *exc* looks like a 429 / quota / rate-limit from the embed API."""
+    name = type(exc).__name__.lower()
+    if "resourceexhausted" in name or "ratelimit" in name:
+        return True
+    msg = str(exc).lower()
+    return "429" in msg or "quota" in msg or "exceeded your current quota" in msg
+
+
+# App-level embedding-quota signal: set when the provider 429s, cleared on the
+# next successful embed (so it auto-recovers after the daily reset). Read by
+# /api/stats so the UI can show one honest, self-clearing quota banner for BOTH
+# "Get latest jobs" and "Get companies" (both embed via this module).
+_quota_hit: bool = False
+
+
+def embedding_quota_hit() -> bool:
+    """True if the last embedding attempt hit the provider quota (and none has
+    succeeded since)."""
+    return _quota_hit
+
+
+def _mark_quota(hit: bool) -> None:
+    global _quota_hit
+    _quota_hit = hit
+
 
 # ---------------------------------------------------------------------------
 # Internal helpers
@@ -23,8 +60,8 @@ def _build_embed_text(
     """Concatenate fields into a single embedding document string.
 
     Layout: title + company + comma-joined skills + first 1500 chars of
-    description.  Keeps the total well inside the 2 048-token context window
-    of ``text-embedding-005``.
+    description.  Keeps the total well inside the embedding model's context
+    window.
     """
     parts: list[str] = [title]
     if company:
@@ -52,14 +89,23 @@ def embed_text(text: str) -> list[float]:
     passages into a vector store.
 
     Returns:
-        Dense float vector produced by ``text-embedding-005``.
+        Dense float vector produced by the configured Gemini embedding model.
     """
     _configure()
-    result = genai.embed_content(
-        model=f"models/{settings.embed_model}",
-        content=text,
-        task_type="retrieval_document",
-    )
+    try:
+        result = genai.embed_content(
+            model=f"models/{settings.embed_model}",
+            content=text,
+            task_type="retrieval_document",
+        )
+    except Exception as exc:
+        if _is_quota_error(exc):
+            _mark_quota(True)
+            raise EmbeddingQuotaError(
+                "Gemini embedding quota exhausted (free tier = 1,000/day); resets daily."
+            ) from exc
+        raise
+    _mark_quota(False)  # a success means the quota has room again
     return result["embedding"]
 
 
@@ -99,9 +145,18 @@ def embed_query(text: str) -> list[float]:
         Dense float vector.
     """
     _configure()
-    result = genai.embed_content(
-        model=f"models/{settings.embed_model}",
-        content=text,
-        task_type="retrieval_query",
-    )
+    try:
+        result = genai.embed_content(
+            model=f"models/{settings.embed_model}",
+            content=text,
+            task_type="retrieval_query",
+        )
+    except Exception as exc:
+        if _is_quota_error(exc):
+            _mark_quota(True)
+            raise EmbeddingQuotaError(
+                "Gemini embedding quota exhausted (free tier = 1,000/day); resets daily."
+            ) from exc
+        raise
+    _mark_quota(False)
     return result["embedding"]

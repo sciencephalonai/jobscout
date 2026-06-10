@@ -190,14 +190,6 @@ def _normalise(job: dict) -> dict | None:
         job_id = job.get("id")
         source_job_id = str(job_id) if job_id is not None else None
 
-        # Jobicy's jobType is a list (e.g. ["Full-Time"]); take the first value.
-        # normalize handles mapping the native string to a canonical type.
-        job_type = job.get("jobType")
-        if isinstance(job_type, list):
-            employment_type = job_type[0] if job_type else None
-        else:
-            employment_type = job_type or None
-
         return {
             "title": title,
             "company": company,
@@ -207,7 +199,6 @@ def _normalise(job: dict) -> dict | None:
             "location": location,
             "posted_date": posted_date,
             "source_job_id": source_job_id,
-            "employment_type": employment_type,
         }
 
     except Exception as exc:  # noqa: BLE001

@@ -246,8 +246,6 @@ def _normalise(job: dict) -> dict | None:
             "location": location,
             "posted_date": posted_date,
             "source_job_id": source_job_id,
-            # Native Remotive job type (e.g. "full_time", "contract"); normalize maps it.
-            "employment_type": job.get("job_type") or None,
         }
 
         # Only include salary fields when we could parse something useful.

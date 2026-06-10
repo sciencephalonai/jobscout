@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any
+from typing import Any, Literal
 
 from openai import OpenAI
 
@@ -49,9 +49,29 @@ _VALID_SENIORITY = {
 _VALID_SIZE_BUCKETS = {
     "1-50", "51-200", "201-500", "501-1000", "1001-5000", "5000+",
 }
-_VALID_EMPLOYMENT = {
-    "full_time", "part_time", "contract", "internship", "temporary", "unknown",
+_VALID_CLEARANCE = {"required", "preferred", "none", "unclear"}
+_VALID_EMPLOYER_TYPE = {
+    "university", "hospital", "nonprofit", "government", "for_profit", "unclear",
 }
+
+# Employer types that are typically H-1B cap-exempt (or affiliated). Used to
+# derive cap_exempt deterministically — the model is NOT asked to assert it,
+# mirroring the rule "only mark cap_exempt when clear from employer type".
+_CAP_EXEMPT_LIKELY = {"university", "government", "nonprofit", "hospital"}
+
+
+def derive_cap_exempt(employer_type: str) -> Literal["yes", "likely", "no", "unknown"]:
+    """Map an employer_type to a cap_exempt stance (deterministic, no LLM).
+
+    Cap-exempt status is only ever "likely" here; a definitive "yes" requires
+    human/verified confirmation. Used both during LLM validation and when a
+    curated adapter stamps employer_type from config.
+    """
+    if employer_type in _CAP_EXEMPT_LIKELY:
+        return "likely"
+    if employer_type == "for_profit":
+        return "no"
+    return "unknown"
 
 
 def _safe_defaults() -> dict:
@@ -63,7 +83,10 @@ def _safe_defaults() -> dict:
         "skills": [],
         "seniority": "unclear",
         "company_size_bucket": None,
-        "employment_type": "unknown",
+        "security_clearance": "unclear",
+        "citizenship_required": False,
+        "employer_type": "unclear",
+        "cap_exempt": "unknown",
     }
 
 
@@ -81,11 +104,22 @@ Return ONLY a JSON object with EXACTLY these keys:
 - "skills": array of strings — concrete technical skills/tools mentioned, lowercased, deduped, at most 15
 - "seniority": one of "intern", "junior", "mid", "senior", "staff", "principal", "lead", "manager", "director", "vp", "c_level", "unclear"
 - "company_size_bucket": one of "1-50", "51-200", "201-500", "501-1000", "1001-5000", "5000+", or null
-- "employment_type": one of "full_time", "part_time", "contract", "internship", "temporary", "unknown" — the role's work arrangement (default "unknown" if not stated)
+- "security_clearance": one of "required", "preferred", "none", "unclear" — does the role require a US security clearance?
+- "citizenship_required": boolean — true ONLY if the posting requires US citizenship, permanent residency, US Person status, or ITAR/EAR/export-control eligibility
+- "employer_type": one of "university", "hospital", "nonprofit", "government", "for_profit", "unclear"
 
 For "company_size_bucket": estimate the COMPANY's employee headcount bucket from the
 company name using your world knowledge. If you genuinely do not recognize the company,
 return null. Do NOT guess wildly.
+
+For "employer_type": classify the hiring organization. Use "for_profit" for normal
+private companies. Only use "university"/"hospital"/"nonprofit"/"government" when the
+employer clearly is one. If unsure, return "unclear".
+
+For "visa_sponsorship": use "no" ONLY when the posting explicitly says it will not
+sponsor (e.g. "no visa sponsorship", "must have permanent authorization"). A question
+asking whether the candidate will need future sponsorship is NOT "no" — use
+"not_mentioned" or "unclear".
 
 TITLE: {title}
 COMPANY: {company}
@@ -191,11 +225,54 @@ def _validate(raw: dict[str, Any]) -> dict:
     if isinstance(bucket, str) and bucket in _VALID_SIZE_BUCKETS:
         result["company_size_bucket"] = bucket
 
-    emp = raw.get("employment_type")
-    if isinstance(emp, str) and emp in _VALID_EMPLOYMENT:
-        result["employment_type"] = emp
+    clearance = raw.get("security_clearance")
+    if isinstance(clearance, str) and clearance in _VALID_CLEARANCE:
+        result["security_clearance"] = clearance
+
+    result["citizenship_required"] = bool(raw.get("citizenship_required"))
+
+    employer_type = raw.get("employer_type")
+    if isinstance(employer_type, str) and employer_type in _VALID_EMPLOYER_TYPE:
+        result["employer_type"] = employer_type
+
+    # Derive cap_exempt deterministically from employer_type — never let the
+    # model assert it directly.
+    result["cap_exempt"] = derive_cap_exempt(result["employer_type"])
 
     return result
+
+
+# ---------------------------------------------------------------------------
+# Recruiter / aggregator detection (heuristic, no LLM)
+# ---------------------------------------------------------------------------
+
+# Sources that are aggregators/recruiter-driven rather than direct employers.
+_AGGREGATOR_SOURCES = {"jobspy", "themuse", "jobicy", "remoteok", "workingnomads"}
+# Phrases that signal a staffing-agency / recruiter wrapper around an unnamed
+# end employer.
+_RECRUITER_PHRASES = (
+    "staffing", "recruit", "talent acquisition partner", "on behalf of our client",
+    "our client is", "confidential client", "agency", "headhunt", "rpo",
+)
+
+
+def detect_recruiter_post(
+    company: str | None,
+    source: str,
+    description: str | None,
+) -> bool:
+    """Heuristically flag recruiter/aggregator postings (vs. direct employers).
+
+    Pure string heuristic — no LLM call. Used so the verdict layer can prefer
+    direct-employer postings and treat unnamed-client recruiter wrappers with
+    skepticism.
+    """
+    if source in _AGGREGATOR_SOURCES:
+        return True
+    if not company or not company.strip():
+        return True  # hidden/unnamed end employer
+    haystack = f"{company} {description or ''}".lower()
+    return any(phrase in haystack for phrase in _RECRUITER_PHRASES)
 
 
 # ---------------------------------------------------------------------------
@@ -217,7 +294,9 @@ def extract_enrichment(
     Returns:
         A dict with exactly these keys: ``yoe_min`` (int|None), ``yoe_max``
         (int|None), ``visa_sponsorship`` (str), ``skills`` (list[str]),
-        ``seniority`` (str), ``company_size_bucket`` (str|None).
+        ``seniority`` (str), ``company_size_bucket`` (str|None),
+        ``security_clearance`` (str), ``citizenship_required`` (bool),
+        ``employer_type`` (str), ``cap_exempt`` (str, derived from employer_type).
 
     Raises:
         EnrichmentError: on a HARD failure — the API call raising, an empty

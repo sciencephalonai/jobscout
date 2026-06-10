@@ -1,0 +1,92 @@
+slug,name,tier,reachable_ats
+# CLEANED tier taxonomy (the pasted data mislabeled JPMorgan/Tesla/McKinsey as "FAANG").
+# reachable_ats: the public ATS our adapters can scrape, or "none" (direct-apply only).
+# --- FAANG + Top Tech (mostly direct-apply: Workday/Taleo/bespoke) ---
+amazon,Amazon,FAANG + Top Tech,none
+apple,Apple,FAANG + Top Tech,none
+google,Google,FAANG + Top Tech,none
+meta,Meta,FAANG + Top Tech,none
+microsoft,Microsoft,FAANG + Top Tech,none
+netflix,Netflix,FAANG + Top Tech,none
+nvidia,NVIDIA,FAANG + Top Tech,none
+# --- Mid-Size / Large Tech (mostly Greenhouse/Lever/Ashby — reachable) ---
+stripe,Stripe,Mid-Size Tech,greenhouse
+snowflake,Snowflake,Mid-Size Tech,ashby
+databricks,Databricks,Mid-Size Tech,greenhouse
+datadog,Datadog,Mid-Size Tech,greenhouse
+mongodb,MongoDB,Mid-Size Tech,greenhouse
+okta,Okta,Mid-Size Tech,greenhouse
+cloudflare,Cloudflare,Mid-Size Tech,greenhouse
+atlassian,Atlassian,Mid-Size Tech,lever
+dropbox,Dropbox,Mid-Size Tech,greenhouse
+spotify,Spotify,Mid-Size Tech,lever
+twilio,Twilio,Mid-Size Tech,greenhouse
+elastic,Elastic,Mid-Size Tech,greenhouse
+hubspot,HubSpot,Mid-Size Tech,greenhouse
+pinterest,Pinterest,Mid-Size Tech,greenhouse
+snap,Snap,Mid-Size Tech,none
+coinbase,Coinbase,Mid-Size Tech,greenhouse
+palantir,Palantir,Mid-Size Tech,lever
+crowdstrike,CrowdStrike,Mid-Size Tech,none
+zoom,Zoom,Mid-Size Tech,none
+docusign,DocuSign,Mid-Size Tech,none
+box,Box,Mid-Size Tech,greenhouse
+asana,Asana,Mid-Size Tech,greenhouse
+notion,Notion,Mid-Size Tech,ashby
+figma,Figma,Mid-Size Tech,greenhouse
+airtable,Airtable,Mid-Size Tech,greenhouse
+amplitude,Amplitude,Mid-Size Tech,greenhouse
+mixpanel,Mixpanel,Mid-Size Tech,greenhouse
+braze,Braze,Mid-Size Tech,greenhouse
+toast,Toast,Mid-Size Tech,greenhouse
+instacart,Instacart,Mid-Size Tech,greenhouse
+airbnb,Airbnb,Mid-Size Tech,greenhouse
+robinhood,Robinhood,Mid-Size Tech,greenhouse
+# --- Consulting (mostly bespoke/Workday — direct-apply) ---
+deloitte,Deloitte,Consulting,none
+ey,Ernst & Young,Consulting,none
+pwc,PwC,Consulting,none
+kpmg,KPMG,Consulting,none
+mckinsey,McKinsey,Consulting,none
+bcg,Boston Consulting Group,Consulting,none
+bain,Bain & Company,Consulting,none
+accenture,Accenture,Consulting,none
+# --- Finance & Banks (direct-apply) ---
+jpmorganchase,JPMorgan Chase,Finance & Banks,none
+goldmansachs,Goldman Sachs,Finance & Banks,none
+morganstanley,Morgan Stanley,Finance & Banks,none
+wellsfargo,Wells Fargo,Finance & Banks,none
+citibank,Citibank,Finance & Banks,none
+blackrock,BlackRock,Finance & Banks,none
+bloomberg,Bloomberg,Finance & Banks,none
+capitalone,Capital One,Finance & Banks,none
+# --- Fintech & Payments ---
+paypal,PayPal,Fintech & Payments,none
+visa,Visa,Fintech & Payments,none
+mastercard,Mastercard,Fintech & Payments,none
+affirm,Affirm,Fintech & Payments,greenhouse
+plaid,Plaid,Fintech & Payments,lever
+chime,Chime,Fintech & Payments,greenhouse
+sofi,SoFi,Fintech & Payments,none
+# --- Healthcare ---
+unitedhealthgroup,UnitedHealth Group,Healthcare,none
+cvshealth,CVS Health,Healthcare,none
+johnsonjohnson,Johnson & Johnson,Healthcare,none
+pfizer,Pfizer,Healthcare,none
+merck,Merck,Healthcare,none
+# --- Startups (Series B+) ---
+ramp,Ramp,Startups,ashby
+brex,Brex,Startups,greenhouse
+carta,Carta,Startups,greenhouse
+deel,Deel,Startups,ashby
+rippling,Rippling,Startups,none
+gusto,Gusto,Startups,greenhouse
+gitlab,GitLab,Startups,greenhouse
+hashicorp,HashiCorp,Startups,none
+anduril,Anduril,Startups,none
+scaleai,Scale AI,Startups,greenhouse
+flexport,Flexport,Startups,greenhouse
+verkada,Verkada,Startups,greenhouse
+outreach,Outreach,Startups,lever
+gong,Gong,Startups,none
+navan,Navan,Startups,none
