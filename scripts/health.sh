@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
-# health.sh — quick health check of the JobScout backend (:8000) and
+# health.sh — quick health check of the JobScout backend (:8001 by default) and
 # frontend (:5173). Prints an HTTP code + OK/DOWN line for each endpoint.
-# Exits non-zero if the backend is down.
+# Exits non-zero if the backend is down. Override the port with JOBSCOUT_API_PORT.
 set -uo pipefail
 
-API_OPENAPI="http://127.0.0.1:8000/openapi.json"
-API_STATS="http://127.0.0.1:8000/api/stats"
+API_PORT="${JOBSCOUT_API_PORT:-8001}"
+API_OPENAPI="http://127.0.0.1:${API_PORT}/openapi.json"
+API_STATS="http://127.0.0.1:${API_PORT}/api/stats"
 FE_URL="http://127.0.0.1:5173/"
 
 code() {

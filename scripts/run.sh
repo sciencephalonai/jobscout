@@ -22,11 +22,15 @@ else
   echo "  Tip: python3 -m venv .venv && .venv/bin/pip install -e '.[dev]'"
 fi
 
+# Backend port — defaults to 8001 (8000 is often taken by another local app);
+# override with JOBSCOUT_API_PORT. Keep the Vite proxy in frontend/vite.config.ts
+# pointed at the same port.
+API_PORT="${JOBSCOUT_API_PORT:-8001}"
 API_LOG="/tmp/jobscout_api.log"
 FE_LOG="/tmp/jobscout_fe.log"
 API_PID_FILE="/tmp/jobscout_api.pid"
 FE_PID_FILE="/tmp/jobscout_fe.pid"
-API_URL="http://127.0.0.1:8000/openapi.json"
+API_URL="http://127.0.0.1:${API_PORT}/openapi.json"
 
 # --- PREFLIGHT: .env presence and key sanity (warn, don't hard-fail) ---
 if [[ ! -f "${REPO_ROOT}/.env" ]]; then
@@ -57,7 +61,7 @@ sleep 1
 # --- Start the backend (must run from repo root: loads sources.yaml etc.) ---
 echo "Starting backend (uvicorn) -> ${API_LOG}"
 : > "${API_LOG}"
-"${UVICORN}" backend.jobscout.api.main:app --host 127.0.0.1 --port 8000 \
+"${UVICORN}" backend.jobscout.api.main:app --host 127.0.0.1 --port "${API_PORT}" \
   >> "${API_LOG}" 2>&1 &
 API_PID=$!
 echo "${API_PID}" > "${API_PID_FILE}"
@@ -104,7 +108,7 @@ cat <<EOF
 JobScout is starting up.
 
   Frontend : http://localhost:5173
-  API docs : http://localhost:8000/docs
+  API docs : http://localhost:${API_PORT}/docs
 
   Backend log  : ${API_LOG}  (PID $(cat "${API_PID_FILE}" 2>/dev/null || echo '?'))
   Frontend log : ${FE_LOG}  (PID $(cat "${FE_PID_FILE}" 2>/dev/null || echo '?'))
