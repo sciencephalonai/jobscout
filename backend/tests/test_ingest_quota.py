@@ -125,14 +125,23 @@ def test_embed_quota_flag_sets_on_429_and_clears_on_success(monkeypatch):
 
     calls = {"n": 0}
 
-    def fake_embed_content(*a, **k):
-        calls["n"] += 1
-        if calls["n"] == 1:
-            raise RuntimeError("429 You exceeded your current quota")
-        return {"embedding": [0.0] * 8}
+    class _FakeEmbedding:
+        values = [0.0] * 8
 
-    monkeypatch.setattr(e.genai, "embed_content", fake_embed_content)
-    monkeypatch.setattr(e, "_configure", lambda: None)
+    class _FakeResult:
+        embeddings = [_FakeEmbedding()]
+
+    class _FakeModels:
+        def embed_content(self, *a, **k):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise RuntimeError("429 You exceeded your current quota")
+            return _FakeResult()
+
+    class _FakeClient:
+        models = _FakeModels()
+
+    monkeypatch.setattr(e, "_get_client", lambda: _FakeClient())
     e._mark_quota(False)
 
     # First call 429s → flag set + EmbeddingQuotaError.

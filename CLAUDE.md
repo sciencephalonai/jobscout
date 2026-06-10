@@ -43,7 +43,7 @@ A `README.md` (setup/run guide) exists at the repo root.
 | Search + vector DB | Weaviate (Docker), hybrid BM25 + vector |
 | Relational side store | DuckDB (run logs, `job_sources` dedup map) |
 | LLM enrichment | DeepSeek `deepseek-chat` via OpenAI-compatible client |
-| Embeddings | Google Gemini API via `google-generativeai`. **Use a `gemini-embedding-*` model** (e.g. `gemini-embedding-001`, 3072-dim) — the spec's `text-embedding-005` is a *Vertex* model name **not served by the Gemini API** and will 404. Set `EMBED_MODEL` accordingly. Local BGE/MiniLM fallback is planned, not built. |
+| Embeddings | Google Gemini API via the `google-genai` SDK. **Use a `gemini-embedding-*` model** (e.g. `gemini-embedding-001`, 3072-dim) — the spec's `text-embedding-005` is a *Vertex* model name **not served by the Gemini API** and will 404. Set `EMBED_MODEL` accordingly. Local BGE/MiniLM fallback is planned, not built. |
 | Scheduling | APScheduler (linear ETL only — not agentic) |
 | Agentic search | LangGraph (optional Phase 4 feature) |
 | API | FastAPI + Uvicorn |

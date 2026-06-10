@@ -1,14 +1,19 @@
-"""Embedding helpers using the Google Gemini embedding API.
+"""Embedding helpers using the Google Gemini embedding API (``google-genai`` SDK).
 
 All functions are synchronous. The embedding model (e.g. ``gemini-embedding-001``)
 and API key are pulled from ``jobscout.config.settings`` so there is a single
 source of truth. Note: ``text-embedding-005`` is a Vertex-only model name and is
 NOT served by the Gemini API — use a ``gemini-embedding-*`` model.
+
+This module uses the current ``google-genai`` SDK (``from google import genai``),
+not the deprecated ``google-generativeai`` package. The client is created once as
+a module-level lazy singleton, mirroring ``jobscout.enrich``.
 """
 
 from __future__ import annotations
 
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 
 from jobscout.config import settings
 
@@ -26,7 +31,12 @@ def _is_quota_error(exc: Exception) -> bool:
     if "resourceexhausted" in name or "ratelimit" in name:
         return True
     msg = str(exc).lower()
-    return "429" in msg or "quota" in msg or "exceeded your current quota" in msg
+    return (
+        "429" in msg
+        or "quota" in msg
+        or "resource_exhausted" in msg
+        or "exceeded your current quota" in msg
+    )
 
 
 # App-level embedding-quota signal: set when the provider 429s, cleared on the
@@ -73,30 +83,39 @@ def _build_embed_text(
     return " ".join(parts)
 
 
-def _configure() -> None:
-    """Configure the google-generativeai SDK with the API key from settings."""
-    genai.configure(api_key=settings.google_api_key)
-
-
 # ---------------------------------------------------------------------------
-# Public API
+# Lazy singleton client
 # ---------------------------------------------------------------------------
 
-def embed_text(text: str) -> list[float]:
-    """Embed an arbitrary document string.
+_client: genai.Client | None = None
 
-    Uses ``task_type="retrieval_document"`` — the correct task for indexing
-    passages into a vector store.
 
-    Returns:
-        Dense float vector produced by the configured Gemini embedding model.
+def _get_client() -> genai.Client:
+    """Return a process-wide singleton ``google-genai`` client."""
+    global _client
+    if _client is None:
+        _client = genai.Client(api_key=settings.google_api_key)
+    return _client
+
+
+# Gemini embedding task types (uppercase in the google-genai SDK).
+_TASK_DOCUMENT = "RETRIEVAL_DOCUMENT"
+_TASK_QUERY = "RETRIEVAL_QUERY"
+
+
+def _embed(text: str, task_type: str) -> list[float]:
+    """Embed *text* for the given Gemini ``task_type`` and return the vector.
+
+    Wraps the raw SDK call with quota detection: a 429/rate-limit raises
+    :class:`EmbeddingQuotaError` and sets the app-level quota flag; any success
+    clears it.
     """
-    _configure()
+    client = _get_client()
     try:
-        result = genai.embed_content(
-            model=f"models/{settings.embed_model}",
-            content=text,
-            task_type="retrieval_document",
+        result = client.models.embed_content(
+            model=settings.embed_model,
+            contents=text,
+            config=types.EmbedContentConfig(task_type=task_type),
         )
     except Exception as exc:
         if _is_quota_error(exc):
@@ -106,7 +125,27 @@ def embed_text(text: str) -> list[float]:
             ) from exc
         raise
     _mark_quota(False)  # a success means the quota has room again
-    return result["embedding"]
+    embeddings = result.embeddings
+    values = embeddings[0].values if embeddings else None
+    if not values:
+        raise RuntimeError("Gemini embedding response contained no vector.")
+    return list(values)
+
+
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
+
+def embed_text(text: str) -> list[float]:
+    """Embed an arbitrary document string.
+
+    Uses ``task_type="RETRIEVAL_DOCUMENT"`` — the correct task for indexing
+    passages into a vector store.
+
+    Returns:
+        Dense float vector produced by the configured Gemini embedding model.
+    """
+    return _embed(text, _TASK_DOCUMENT)
 
 
 def embed_job(
@@ -135,7 +174,7 @@ def embed_job(
 def embed_query(text: str) -> list[float]:
     """Embed a user search query string.
 
-    Uses ``task_type="retrieval_query"`` so the model optimises the vector for
+    Uses ``task_type="RETRIEVAL_QUERY"`` so the model optimises the vector for
     querying against document-task vectors.
 
     Args:
@@ -144,19 +183,4 @@ def embed_query(text: str) -> list[float]:
     Returns:
         Dense float vector.
     """
-    _configure()
-    try:
-        result = genai.embed_content(
-            model=f"models/{settings.embed_model}",
-            content=text,
-            task_type="retrieval_query",
-        )
-    except Exception as exc:
-        if _is_quota_error(exc):
-            _mark_quota(True)
-            raise EmbeddingQuotaError(
-                "Gemini embedding quota exhausted (free tier = 1,000/day); resets daily."
-            ) from exc
-        raise
-    _mark_quota(False)
-    return result["embedding"]
+    return _embed(text, _TASK_QUERY)
