@@ -50,6 +50,8 @@ def build_filters(
     employer_type: list[str] | None = None,
     cap_exempt: list[str] | None = None,
     security_clearance: list[str] | None = None,
+    category: list[str] | None = None,
+    employment_type: list[str] | None = None,
     exclude_citizenship_required: bool = False,
     exclude_recruiter: bool = False,
     exclude_no_sponsorship: bool = False,
@@ -106,6 +108,8 @@ def build_filters(
         ("company_size_bucket", company_size),
         ("employer_type", employer_type),
         ("security_clearance", security_clearance),
+        ("category", category),
+        ("employment_type", employment_type),
     ):
         f = _any_equal(prop, vals)
         if f is not None:
@@ -139,13 +143,30 @@ def build_filters(
 
     # Experience bands (multi-select), matched against the role's required
     # years (yoe_min). Selected bands are OR'd together.
+    # When yoe_min is null (unenriched job), fall back to the seniority field
+    # so that Senior/Lead/Manager titles don't bleed into entry-level results.
     if exp:
         yoe = Filter.by_property("yoe_min")
+
+        def _seniority_in(*vals: str) -> Any:
+            f = Filter.by_property("seniority").equal(vals[0])
+            for v in vals[1:]:
+                f = f | Filter.by_property("seniority").equal(v)
+            return f
+
         band_filters = {
-            "entry": yoe.is_none(True) | yoe.less_or_equal(2),
-            "mid": yoe.greater_or_equal(3) & yoe.less_or_equal(5),
-            "senior": yoe.greater_or_equal(6) & yoe.less_or_equal(10),
-            "lead": yoe.greater_or_equal(11),
+            "entry": yoe.less_or_equal(2) | (
+                yoe.is_none(True) & _seniority_in("intern", "junior", "unclear")
+            ),
+            "mid": (yoe.greater_or_equal(3) & yoe.less_or_equal(5)) | (
+                yoe.is_none(True) & _seniority_in("mid")
+            ),
+            "senior": (yoe.greater_or_equal(6) & yoe.less_or_equal(10)) | (
+                yoe.is_none(True) & _seniority_in("senior", "staff")
+            ),
+            "lead": yoe.greater_or_equal(11) | (
+                yoe.is_none(True) & _seniority_in("lead", "principal", "manager", "director", "vp", "c_level")
+            ),
         }
         bands = _or([band_filters[b] for b in exp if b in band_filters])
         if bands is not None:
@@ -200,7 +221,7 @@ def _fetch_facets(
 
     for prop in (
         "visa_sponsorship", "remote_mode", "source", "company_size_bucket",
-        "employer_type", "cap_exempt", "security_clearance",
+        "employer_type", "cap_exempt", "security_clearance", "category",
     ):
         try:
             result = collection.aggregate.over_all(

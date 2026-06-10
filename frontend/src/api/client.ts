@@ -19,7 +19,7 @@ export function buildQueryString(filters: JobFilters): string {
   // each filter. Empty/undefined arrays are skipped entirely.
   const multiFields: (keyof JobFilters)[] = [
     'remote', 'visa', 'source', 'company_size', 'exp', 'cap_exempt',
-    'employer_type', 'security_clearance',
+    'employer_type', 'security_clearance', 'category', 'employment_type',
   ]
   for (const field of multiFields) {
     const values = filters[field] as string[] | undefined

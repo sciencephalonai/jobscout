@@ -46,6 +46,7 @@ export interface JobsResponse {
     remote_mode?: Record<string, number>
     source?: Record<string, number>
     company_size?: Record<string, number>
+    category?: Record<string, number>
   }
   verdicts?: Record<string, Verdict>  // present when a profile_id is supplied
 }
@@ -130,6 +131,8 @@ export interface JobFilters {
   date_range?: string
   source?: string[]
   company_size?: string[]
+  category?: string[]
+  employment_type?: string[]       // full_time|contract|part_time|internship|temporary
   // ── Sponsorship toggles ──
   cap_exempt?: string[]            // e.g. ['yes','likely'] for the cap-exempt toggle
   exclude_no_sponsorship?: boolean // hide explicit no + citizenship-required

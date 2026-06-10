@@ -31,6 +31,12 @@ def test_multi_value_source_filter() -> None:
     assert build_filters(source=["adzuna", "greenhouse"]) is not None
 
 
+def test_employment_type_filter() -> None:
+    assert build_filters(employment_type=["contract"]) is not None
+    assert build_filters(employment_type=["full_time", "contract"]) is not None
+    assert build_filters(employment_type=[]) is None
+
+
 def test_single_remote_filter() -> None:
     assert build_filters(remote=["remote"]) is not None
 

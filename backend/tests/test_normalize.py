@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta
 
 from jobscout.normalize import (
     compute_job_id,
+    derive_employment_type,
     fix_mojibake,
     normalize_employment_type,
     normalize_remote,
@@ -14,6 +15,44 @@ from jobscout.normalize import (
     parse_posted_date,
     raw_to_job,
 )
+
+
+class TestDeriveEmploymentType:
+    def test_internship_from_title(self):
+        assert derive_employment_type("Software Engineering Intern") == "internship"
+        assert derive_employment_type("Data Science Co-op") == "internship"
+
+    def test_contract_from_title(self):
+        assert derive_employment_type("Contract Backend Engineer") == "contract"
+        assert derive_employment_type("Freelance UX Designer") == "contract"
+
+    def test_part_time_from_title(self):
+        assert derive_employment_type("Part-Time Bookkeeper") == "part_time"
+
+    def test_temporary_from_title(self):
+        assert derive_employment_type("Seasonal Warehouse Associate") == "temporary"
+
+    def test_defaults_to_full_time(self):
+        assert derive_employment_type("Senior Backend Engineer") == "full_time"
+        assert derive_employment_type("Data Scientist") == "full_time"
+
+    def test_title_takes_precedence_over_description(self):
+        # Title says intern → internship even if the body mentions "contract".
+        assert derive_employment_type(
+            "Engineering Intern", "full-time contract position"
+        ) == "internship"
+
+    def test_description_phrase_when_title_neutral(self):
+        assert derive_employment_type(
+            "Data Engineer", "This is a contract position for 6 months."
+        ) == "contract"
+
+    def test_bare_contract_word_in_description_does_not_false_positive(self):
+        # The word "contract" alone (e.g. legal boilerplate) must NOT flip a
+        # full-time role to contract — only multi-word phrases do.
+        assert derive_employment_type(
+            "Staff Engineer", "You will sign an employment contract on day one."
+        ) == "full_time"
 
 # ── Ported-from-Dropbox helpers: mojibake, title, employment type ────────────
 

@@ -9,7 +9,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 import weaviate
-from weaviate.classes.config import Configure, DataType, Property
+from weaviate.classes.config import Configure, DataType, Property, Tokenization
 from weaviate.classes.init import AdditionalConfig, Auth, Timeout
 from weaviate.util import generate_uuid5
 
@@ -74,6 +74,8 @@ def _job_to_props(job: Job) -> dict:
         "known_h1b_sponsor": job.known_h1b_sponsor,
         "known_everify": job.known_everify,
         "is_recruiter_post": job.is_recruiter_post,
+        "category": job.category,
+        "employment_type": job.employment_type,
         "location_raw": job.location_raw or "",
         "ingested_at": _dt_or_none(job.ingested_at),
     }
@@ -135,6 +137,8 @@ def _props_to_job(props: dict, job_id: str | None = None) -> Job:
         known_h1b_sponsor=bool(props.get("known_h1b_sponsor") or False),
         known_everify=bool(props.get("known_everify") or False),
         is_recruiter_post=bool(props.get("is_recruiter_post") or False),
+        category=props.get("category") or "other",
+        employment_type=props.get("employment_type") or "full_time",
         enrichment_status=props.get("enrichment_status", "pending"),
         raw_payload=None,
     )
@@ -256,6 +260,10 @@ class WeaviateStore:
                 Property(name="known_h1b_sponsor", data_type=DataType.BOOL),
                 Property(name="known_everify", data_type=DataType.BOOL),
                 Property(name="is_recruiter_post", data_type=DataType.BOOL),
+                Property(name="category", data_type=DataType.TEXT,
+                         tokenization=Tokenization.FIELD),
+                Property(name="employment_type", data_type=DataType.TEXT,
+                         tokenization=Tokenization.FIELD),
                 Property(name="location_raw", data_type=DataType.TEXT),
                 Property(name="ingested_at", data_type=DataType.DATE),
             ],
@@ -283,6 +291,8 @@ class WeaviateStore:
             ("known_h1b_sponsor", DataType.BOOL),
             ("known_everify", DataType.BOOL),
             ("is_recruiter_post", DataType.BOOL),
+            ("category", DataType.TEXT),
+            ("employment_type", DataType.TEXT),
         ]
         for name, data_type in _MIGRATIONS:
             if name in existing:

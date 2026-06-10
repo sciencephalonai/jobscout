@@ -161,6 +161,9 @@ async def list_jobs(
     category: list[str] | None = Query(
         None, description="repeatable: software_eng|data_ml_ai|devops_infra|security|product_mgmt|design_ux|management|other"
     ),
+    employment_type: list[str] | None = Query(
+        None, description="repeatable: full_time|part_time|contract|internship|temporary"
+    ),
     exclude_citizenship_required: bool = Query(
         False, description="Drop roles that require US citizenship / GC / ITAR eligibility"
     ),
@@ -220,6 +223,7 @@ async def list_jobs(
             cap_exempt=cap_exempt,
             security_clearance=security_clearance,
             category=category,
+            employment_type=employment_type,
             exclude_citizenship_required=exclude_citizenship_required,
             exclude_recruiter=exclude_recruiter,
             exclude_no_sponsorship=exclude_no_sponsorship,

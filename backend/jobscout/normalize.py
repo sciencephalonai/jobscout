@@ -85,6 +85,62 @@ def normalize_title(title: str) -> str:
     return normalize_text(t)
 
 
+_CATEGORY_RULES: list[tuple[str, list[str]]] = [
+    ("data_ml_ai", [
+        "data scientist", "data science", "machine learning", "ml engineer",
+        "ai engineer", "nlp engineer", "deep learning", "llm engineer",
+        "data engineer", "data analyst", "analytics engineer",
+        "research scientist", "applied scientist", "quantitative researcher",
+        "research engineer", "ai/ml", "ml/ai",
+    ]),
+    ("devops_infra", [
+        "devops", "site reliability engineer", "sre",
+        "infrastructure engineer", "platform engineer", "cloud engineer",
+        "reliability engineer", "build engineer", "network engineer",
+        "systems administrator", "sysadmin", "storage engineer",
+        "database administrator", "dba",
+    ]),
+    ("security", [
+        "security engineer", "security analyst", "security architect",
+        "security researcher", "cybersecurity", "infosec",
+        "penetration test", "soc analyst", "security grc",
+        "information security",
+    ]),
+    ("product_mgmt", [
+        "product manager", "product owner", "product lead",
+    ]),
+    ("design_ux", [
+        "ux designer", "ui designer", "product designer",
+        "graphic designer", "visual designer", "ux researcher",
+        "ui/ux", "user experience designer", "creative director",
+        "art director",
+    ]),
+    ("management", [
+        "engineering manager", "technical lead manager",
+        "program manager", "project manager",
+        "director", "vice president",
+        "head of", "cto", "ceo", "cfo", "cpo", "cio",
+    ]),
+    ("software_eng", [
+        "software engineer", "software developer", "full stack", "fullstack",
+        "full-stack", "frontend engineer", "frontend developer",
+        "backend engineer", "backend developer", "mobile engineer",
+        "mobile developer", "ios engineer", "ios developer",
+        "android engineer", "android developer", "web developer", "web engineer",
+        "robotic software", "simulation software",
+    ]),
+]
+
+
+def derive_category(title: str) -> str:
+    """Infer a broad job category from the title via keyword matching."""
+    low = title.lower()
+    for category, keywords in _CATEGORY_RULES:
+        if any(kw in low for kw in keywords):
+            return category
+    return "other"
+
+
 def normalize_employment_type(raw: str | None) -> str:
     """Map a free-text employment/job-type string to a canonical bucket.
 
@@ -97,6 +153,51 @@ def normalize_employment_type(raw: str | None) -> str:
         if any(n in low for n in needles):
             return bucket
     return "unknown"
+
+
+# Title keywords are high-precision (a role that says "Intern"/"Contract" in the
+# title almost always is one). Description phrases add recall but are matched as
+# multi-word phrases to avoid false positives from legal boilerplate (e.g. the
+# bare word "contract" in "employment contract" on a full-time posting).
+_EMPLOYMENT_TITLE_RULES: list[tuple[str, list[str]]] = [
+    ("internship", ["intern", "internship", "co-op", "co op", "coop"]),
+    ("contract", [
+        "contract", "contractor", "c2c", "1099", "freelance",
+        "temp-to-perm", "temp to perm", "contract-to-hire", "contract to hire",
+    ]),
+    ("part_time", ["part-time", "part time"]),
+    ("temporary", ["temporary", "seasonal", "fixed-term", "fixed term"]),
+]
+
+_EMPLOYMENT_DESC_PHRASES: list[tuple[str, list[str]]] = [
+    ("internship", ["internship", "intern position", "summer intern"]),
+    ("contract", [
+        "contract position", "contract role", "contract opportunity",
+        "this is a contract", "w2 contract", "month contract",
+        "contract-to-hire", "contract to hire",
+    ]),
+    ("part_time", ["part-time", "part time"]),
+    ("temporary", ["temporary position", "seasonal", "fixed-term", "fixed term"]),
+]
+
+
+def derive_employment_type(title: str, description: str | None = None) -> str:
+    """Infer a canonical employment-type bucket from a job's title/description.
+
+    Returns one of full_time|part_time|contract|internship|temporary, defaulting
+    to ``full_time`` (the common case) when no clearer signal is present. Title
+    keywords take precedence over description phrases.
+    """
+    low_t = (title or "").lower()
+    for bucket, needles in _EMPLOYMENT_TITLE_RULES:
+        if any(n in low_t for n in needles):
+            return bucket
+    if description:
+        low_d = description.lower()[:3000]
+        for bucket, phrases in _EMPLOYMENT_DESC_PHRASES:
+            if any(p in low_d for p in phrases):
+                return bucket
+    return "full_time"
 
 
 def compute_job_id(company: str | None, title: str, city: str | None) -> str:
@@ -363,6 +464,22 @@ def raw_to_job(raw: dict[str, Any], source: str) -> Job:
         employer_type_raw if employer_type_raw in _VALID_EMPLOYER_TYPES else "unclear",
     )
 
+    # Employment type: prefer a source-provided value (some adapters carry one),
+    # else derive heuristically from title/description. Never "unknown" — falls
+    # back to full_time so the full_time filter is the sensible default bucket.
+    description = fix_mojibake(raw.get("description")) or None
+    src_emp = normalize_employment_type(
+        raw.get("employment_type") or raw.get("job_type")
+    )
+    employment_type = cast(
+        "Literal['full_time','part_time','contract','internship','temporary']",
+        src_emp if src_emp != "unknown" else derive_employment_type(title, description),
+    )
+    category = cast(
+        "Literal['software_eng','data_ml_ai','devops_infra','security','product_mgmt','design_ux','management','other']",
+        derive_category(title),
+    )
+
     return Job(
         job_id=job_id,
         source=source,
@@ -373,7 +490,9 @@ def raw_to_job(raw: dict[str, Any], source: str) -> Job:
         country=country,
         city=city,
         remote_mode=normalize_remote(raw.get("remote")),
-        description=fix_mojibake(raw.get("description")) or None,
+        category=category,
+        employment_type=employment_type,
+        description=description,
         url=url,
         salary_min=salary_min,
         salary_max=salary_max,

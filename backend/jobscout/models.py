@@ -55,6 +55,9 @@ class Job(BaseModel):
         "software_eng", "data_ml_ai", "devops_infra", "security",
         "product_mgmt", "design_ux", "management", "other"
     ] = "other"
+    employment_type: Literal[
+        "full_time", "part_time", "contract", "internship", "temporary"
+    ] = "full_time"
     enrichment_status: Literal["pending", "done", "failed"] = "pending"
     raw_payload: str | None = None          # JSON-serialised original API response
     # Response-only (computed at query time, never stored): near-duplicate repost collapse.

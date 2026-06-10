@@ -58,6 +58,25 @@ const CLEARANCE_OPTIONS = [
   { label: 'Unclear', value: 'unclear' },
 ]
 
+const CATEGORY_OPTIONS = [
+  { label: 'Software Eng', value: 'software_eng' },
+  { label: 'Data / ML / AI', value: 'data_ml_ai' },
+  { label: 'DevOps / Infra', value: 'devops_infra' },
+  { label: 'Security', value: 'security' },
+  { label: 'Product', value: 'product_mgmt' },
+  { label: 'Design / UX', value: 'design_ux' },
+  { label: 'Management', value: 'management' },
+  { label: 'Other', value: 'other' },
+]
+
+const EMPLOYMENT_TYPE_OPTIONS = [
+  { label: 'Full-time', value: 'full_time' },
+  { label: 'Contract', value: 'contract' },
+  { label: 'Part-time', value: 'part_time' },
+  { label: 'Internship', value: 'internship' },
+  { label: 'Temporary', value: 'temporary' },
+]
+
 // ---------------------------------------------------------------------------
 // Dropdown pill — a single-select popover styled as a LinkedIn-like pill
 // ---------------------------------------------------------------------------
@@ -404,6 +423,8 @@ export default function FilterBar({
   }))
 
   const hasActiveFilters =
+    (filters.category?.length ?? 0) > 0 ||
+    (filters.employment_type?.length ?? 0) > 0 ||
     !!filters.date_range ||
     (filters.remote?.length ?? 0) > 0 ||
     (filters.source?.length ?? 0) > 0 ||
@@ -414,7 +435,7 @@ export default function FilterBar({
     !!filters.h1b_sponsor ||
     !!filters.everify ||
     (filters.employer_type?.length ?? 0) > 0 ||
-    (filters.security_clearance?.length ?? 0) > 0 ||
+    (filters.security_clearance?.some(v => v !== 'none') ?? false) ||
     !!filters.exclude_recruiter
 
   return (
@@ -442,6 +463,18 @@ export default function FilterBar({
         values={filters.exp}
         options={EXPERIENCE_OPTIONS}
         onChange={(v) => onFilterChange({ exp: v })}
+      />
+      <MultiSelectPill
+        label="Category"
+        values={filters.category}
+        options={CATEGORY_OPTIONS}
+        onChange={(v) => onFilterChange({ category: v })}
+      />
+      <MultiSelectPill
+        label="Job type"
+        values={filters.employment_type}
+        options={EMPLOYMENT_TYPE_OPTIONS}
+        onChange={(v) => onFilterChange({ employment_type: v })}
       />
       <SponsorshipPill filters={filters} onChange={onFilterChange} />
       <MultiSelectPill
