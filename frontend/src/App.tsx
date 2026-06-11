@@ -18,7 +18,7 @@ const APPLY_KEY = 'jobscout.applyFilters'
 const DEFAULT_FILTERS: JobFilters = {
   page: 1,
   page_size: 20,
-  sort: 'relevance',
+  sort: 'posted_desc',
   // Semantic-leaning search (mostly meaning-based, slight keyword weighting so
   // exact title matches still surface). No user-facing control — see SearchBar.
   alpha: 0.75,
@@ -26,6 +26,7 @@ const DEFAULT_FILTERS: JobFilters = {
   // sponsorship / require citizenship. Keeps the ~96% that say nothing, so the
   // list is never empty. The user can turn this off in the Sponsorship filter.
   exclude_no_sponsorship: true,
+  security_clearance: ['none'],
 }
 
 function JobsPage() {

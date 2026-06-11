@@ -157,6 +157,7 @@ class AdzunaAdapter:
                     "what": what,
                     "results_per_page": page_size,
                     "content-type": "application/json",
+                    "full_description": "1",
                 }
                 if where:
                     params["where"] = where

@@ -1011,3 +1011,110 @@ async def stats(request: Request) -> dict[str, Any]:
         # both "Get latest jobs" and "Get companies".
         "embed_quota_exhausted": embedding_quota_hit(),
     }
+
+
+@app.post("/api/maintenance/backfill-lever-descriptions", tags=["operations"])
+async def backfill_lever_descriptions(request: Request, background_tasks: BackgroundTasks) -> dict:
+    """Patch full Lever descriptions into existing Weaviate jobs without re-embedding.
+
+    Lever's API splits the JD across descriptionPlain + lists (bullets) + additionalPlain.
+    Previously only descriptionPlain was stored. This endpoint fetches all configured Lever
+    companies, assembles the full description, and patches only the description field.
+    """
+    import html as _html
+    import re
+
+    import httpx
+    from weaviate.classes.query import Filter as _Filter
+
+    from jobscout.services.source_config import _load_sources_cfg
+    from jobscout.store import COLLECTION_NAME as _CN
+
+    store: WeaviateStore = request.app.state.weaviate_store
+
+    _TAG_RE = re.compile(r"<[^>]+>")
+
+    def _strip(t: str) -> str:
+        return _TAG_RE.sub("", _html.unescape(t)).strip()
+
+    def _full_desc(p: dict) -> str | None:
+        parts: list[str] = []
+        intro = (p.get("descriptionPlain") or "").strip()
+        if intro:
+            parts.append(intro)
+        for sec in p.get("lists") or []:
+            h = (sec.get("text") or "").strip()
+            c = _strip(sec.get("content") or "")
+            if h:
+                parts.append(f"\n{h}")
+            if c:
+                parts.append(c)
+        footer = (p.get("additionalPlain") or "").strip()
+        if footer:
+            parts.append(f"\n{footer}")
+        return "\n".join(parts) or None
+
+    def _get_slugs() -> list[str]:
+        cfg = _load_sources_cfg()
+        lever_cfg = cfg.get("sources", {}).get("lever", {})
+        slugs = []
+        for entry in lever_cfg.get("companies", []):
+            if isinstance(entry, str):
+                slugs.append(entry)
+            elif isinstance(entry, dict):
+                t = entry.get("token") or entry.get("slug") or entry.get("name")
+                if t:
+                    slugs.append(t)
+        return slugs
+
+    def _do_backfill() -> None:
+        col = store._client.collections.get(_CN)
+        slugs = _get_slugs()
+        updated = skipped = 0
+        for slug in slugs:
+            try:
+                r = httpx.get(f"https://api.lever.co/v0/postings/{slug}?mode=json", timeout=15)
+                postings = r.json()
+            except Exception as e:
+                log.error("Lever fetch failed for %s: %s", slug, e)
+                continue
+            for p in postings:
+                title = (p.get("text") or "").strip()
+                if not title:
+                    continue
+                full = _full_desc(p)
+                if not full:
+                    skipped += 1
+                    continue
+                # Match by source + company + title (avoids city normalization mismatch)
+                try:
+                    result = col.query.fetch_objects(
+                        filters=(
+                            _Filter.by_property("source").equal("lever") &
+                            _Filter.by_property("company").equal(slug) &
+                            _Filter.by_property("title").equal(title)
+                        ),
+                        limit=1,
+                    )
+                except Exception as e:
+                    log.warning("Query failed %s/%s: %s", slug, title[:40], e)
+                    skipped += 1
+                    continue
+                if not result.objects:
+                    skipped += 1
+                    continue
+                obj = result.objects[0]
+                existing = len(str(obj.properties.get("description") or ""))
+                if len(full) <= existing:
+                    skipped += 1
+                    continue
+                try:
+                    col.data.update(uuid=obj.uuid, properties={"description": full})
+                    updated += 1
+                except Exception as e:
+                    log.warning("Update failed %s/%s: %s", slug, title[:40], e)
+                    skipped += 1
+        log.info("backfill_lever done updated=%d skipped=%d", updated, skipped)
+
+    background_tasks.add_task(_do_backfill)
+    return {"status": "started", "message": "Lever description backfill running in background. Check server logs for progress."}

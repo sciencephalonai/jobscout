@@ -10,6 +10,7 @@ from jobscout.adapters.adzuna import AdzunaAdapter
 from jobscout.adapters.arbeitnow import ArbeitnowAdapter
 from jobscout.adapters.ashby import AshbyAdapter
 from jobscout.adapters.greenhouse import GreenhouseAdapter
+from jobscout.adapters.himalayas import HimalayasAdapter
 from jobscout.adapters.jobicy import JobicyAdapter
 from jobscout.adapters.jobrightai import JobrightAIAdapter
 from jobscout.adapters.jobspy_adapter import JobSpyAdapter
@@ -30,6 +31,7 @@ __all__ = [
     "ArbeitnowAdapter",
     "AshbyAdapter",
     "GreenhouseAdapter",
+    "HimalayasAdapter",
     "JobicyAdapter",
     "JobrightAIAdapter",
     "JobSpyAdapter",

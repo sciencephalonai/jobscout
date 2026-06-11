@@ -527,3 +527,48 @@ def test_post_enforces_blocklist():
             client.post("https://blocked.example.com/wday/cxs/x/y/jobs", json={})
     finally:
         client.close()
+
+
+def test_himalayas_parses_filters_and_unescapes_real_shape():
+    """Himalayas adapter: real API field names, title keyword filter, html unescape.
+
+    Uses a full 20-record page (the API's hard cap) so the
+    ``len(jobs) < _PAGE_SIZE`` end-of-data check does NOT fire on page 1 —
+    guarding the regression where _PAGE_SIZE=100 killed pagination immediately.
+    """
+    from jobscout.adapters.himalayas import _PAGE_SIZE, HimalayasAdapter
+
+    assert _PAGE_SIZE == 20  # must match the API's real per-page cap
+
+    jobs = [
+        {
+            "title": f"Marketing Specialist {i}",
+            "companyName": "Acme",
+            "applicationLink": f"https://himalayas.app/jobs/{i}",
+            "description": "<p>Build &amp; ship</p>",
+            "pubDate": 1700000000,
+            "guid": f"g{i}",
+            "currency": "USD",
+        }
+        for i in range(_PAGE_SIZE)
+    ]
+    jobs[3]["title"] = "Senior Data Engineer"
+    jobs[7]["title"] = "Platform Engineer"
+
+    ad = HimalayasAdapter()
+    rows = list(
+        ad.search(
+            keywords=["engineer"],
+            location=None,
+            results_wanted=10,
+            since=None,
+            http=FakeHttpGet({"jobs": jobs}),
+        )
+    )
+
+    assert {r["title"] for r in rows} == {"Senior Data Engineer", "Platform Engineer"}
+    r = rows[0]
+    assert r["url"].startswith("https://himalayas.app/jobs/")
+    assert r["company"] == "Acme"
+    assert r["remote"] == "remote"
+    assert "&amp;" not in (r["description"] or "")  # html entities unescaped

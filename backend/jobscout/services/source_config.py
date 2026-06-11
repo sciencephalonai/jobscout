@@ -16,6 +16,7 @@ from jobscout.adapters import (
     ArbeitnowAdapter,
     AshbyAdapter,
     GreenhouseAdapter,
+    HimalayasAdapter,
     JobicyAdapter,
     JobrightAIAdapter,
     JobSpyAdapter,
@@ -42,8 +43,8 @@ _RUNTIME_SOURCE_OVERRIDES: dict[str, bool] = {}
 _SOURCE_ORDER = [
     "greenhouse", "lever", "ashby", "workable", "workday", "rippling",
     "recruitee", "smartrecruiters", "adzuna", "remotive", "arbeitnow",
-    "jobicy", "remoteok", "workingnomads", "themuse", "rss", "jobrightai",
-    "jobspy",
+    "jobicy", "remoteok", "workingnomads", "themuse", "himalayas", "rss",
+    "jobrightai", "jobspy",
 ]
 
 # Source authority for dedup tiebreaks (lower = more authoritative).
@@ -52,7 +53,7 @@ _SOURCE_AUTHORITY: dict[str, int] = {
     "recruitee": 0, "smartrecruiters": 0,
     "adzuna": 1,
     "remotive": 2, "arbeitnow": 2, "jobicy": 2,
-    "remoteok": 2, "workingnomads": 2, "themuse": 2, "rss": 2, "jobrightai": 2,
+    "remoteok": 2, "workingnomads": 2, "themuse": 2, "himalayas": 2, "rss": 2, "jobrightai": 2,
     "jobspy": 3,
 }
 _DEFAULT_AUTHORITY = 2
@@ -157,6 +158,8 @@ def _build_adapters(sources_cfg: dict[str, Any]) -> list[Any]:
                     fetch_descriptions=cfg.get("fetch_descriptions", True),
                 )
             )
+        elif name == "himalayas":
+            adapters.append(HimalayasAdapter())
         elif name == "rss":
             adapters.append(RssAdapter(feeds=cfg.get("feeds", [])))
         elif name == "jobrightai":

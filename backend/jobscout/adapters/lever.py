@@ -15,7 +15,9 @@ Docs: https://help.lever.co/hc/en-us/articles/360042743932-Lever-Postings-API
 
 from __future__ import annotations
 
+import html as _html
 import logging
+import re
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from typing import Any
@@ -27,6 +29,38 @@ from jobscout.normalize import normalize_remote
 log = logging.getLogger(__name__)
 
 _BASE_URL = "https://api.lever.co/v0/postings/{company}?mode=json"
+
+_TAG_RE = re.compile(r"<[^>]+>")
+
+
+def _strip_html(text: str) -> str:
+    return _TAG_RE.sub("", _html.unescape(text)).strip()
+
+
+def _full_description(posting: dict) -> str | None:
+    """Assemble the complete job description from all Lever sections.
+
+    Lever splits the JD across three fields:
+      - descriptionPlain  — intro paragraph
+      - lists             — [{text: "Section header", content: "<HTML bullets>"}]
+      - additionalPlain   — footer (company info, benefits, etc.)
+    Using only descriptionPlain gives a 400-600 char intro; this combines all.
+    """
+    parts: list[str] = []
+    intro = (posting.get("descriptionPlain") or "").strip()
+    if intro:
+        parts.append(intro)
+    for section in posting.get("lists") or []:
+        header = (section.get("text") or "").strip()
+        content = _strip_html(section.get("content") or "")
+        if header:
+            parts.append(f"\n{header}")
+        if content:
+            parts.append(content)
+    footer = (posting.get("additionalPlain") or "").strip()
+    if footer:
+        parts.append(f"\n{footer}")
+    return "\n".join(parts) or None
 
 
 class LeverAdapter:
@@ -201,7 +235,7 @@ class LeverAdapter:
                 "title": title,
                 "company": company,
                 "url": url,
-                "description": posting.get("descriptionPlain") or None,
+                "description": _full_description(posting),
                 "location": location,
                 "posted_date": posted_date,
                 "source_job_id": str(posting["id"]) if posting.get("id") is not None else None,

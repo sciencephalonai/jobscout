@@ -126,16 +126,18 @@ sources:
       - {token: Visa, type: for_profit}
       - {token: ServiceNow, type: for_profit}
 
+  himalayas:
+    enabled: true            # public JSON API, no key required, full descriptions
+
   rss:
-    enabled: false           # generic RSS adapter — feeds below are EXAMPLES only
-    # WARNING: HigherEdJobs serves an EMPTY feed to our honest JobScoutBot
-    # User-Agent (verified: 0 entries via scripts/smoke_adapters.py); it appears
-    # to gate RSS on a browser UA, and we will not spoof it (compliance rule).
-    # So HigherEdJobs is effectively unusable here. Point this adapter at job
-    # feeds that serve all clients (e.g. an institution's own career-page RSS).
-    # Each feed: {url, type}. HigherEdJobs tech catIDs (if it ever opens up) —
-    # 290 Data Science, 102 Computer Science, 159 Software Engineer, 161 IT, 211 DBA.
-    feeds: []
+    enabled: true
+    feeds:
+      - url: https://weworkremotely.com/categories/remote-programming-jobs.rss
+        type: for_profit
+      - url: https://weworkremotely.com/categories/remote-data-science-jobs.rss
+        type: for_profit
+      - url: https://weworkremotely.com/categories/remote-devops-sysadmin-jobs.rss
+        type: for_profit
 
   jobrightai:
     enabled: false           # keyword aggregator (jobright.ai SSR __NEXT_DATA__ JSON).
