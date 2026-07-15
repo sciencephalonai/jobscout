@@ -2,7 +2,9 @@ version: "3.9"
 
 services:
   weaviate:
-    image: semitechnologies/weaviate:1.24.1
+    # 1.27.0 had broken offset pagination under range filters (pages overlapped
+    # ~95% whenever a date filter was active) — fixed by the 1.27.x patches.
+    image: semitechnologies/weaviate:1.27.27
     restart: unless-stopped
     ports:
       - "8080:8080"

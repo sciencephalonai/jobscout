@@ -57,35 +57,50 @@ Job sources (19 adapters)
 
 ## 2. Ingestion pipeline (what happens on "Get latest jobs" / refresh)
 
+Fetching is **parallel** (one worker + one `CompliantHttpClient` per source, so per-domain rate
+limits/robots are still respected); everything stateful — enrichment, the embed budget, database
+writes, run logs — stays on a **single processing stream** (`INGEST_FETCH_WORKERS`, default 6;
+`1` restores sequential behavior).
+
 ```mermaid
 sequenceDiagram
     participant UI
     participant API as FastAPI
-    participant AD as Adapter
+    participant P as Fetch pool (parallel)
     participant DS as DeepSeek
     participant GM as Gemini
     participant WV as Weaviate
     participant DK as DuckDB
     UI->>API: POST /api/search/run {keywords}
-    API->>AD: adapter.search(...)
-    AD-->>API: raw job dicts (via CompliantHttpClient)
-    API->>API: raw_to_job + is_us_job (drop non-US)
-    API->>WV: get_by_id (dedup — skip if already stored)
-    API->>DS: extract_enrichment (yoe, visa, skills, employer_type)
-    API->>GM: embed_job (3072-dim vector)
-    API->>WV: upsert(job, vector)
-    API->>DK: upsert_job_source (dedup map) / runs (audit)
+    par one worker per source
+        API->>P: adapter.search(...) — own CompliantHttpClient each
+    end
+    P-->>API: raw job dicts, per source as each finishes
+    loop single processing stream (per source)
+        API->>API: raw_to_job + is_us_job (drop non-US, title guard)
+        API->>API: profile pre-filter (role families, seniority, care-occupation guard)
+        API->>WV: get_by_id (dedup — skip if already stored)
+        API->>DS: extract_enrichment (yoe, visa, skills, employer_type)
+        API->>GM: embed_job (3072-dim vector, budget-capped)
+        API->>WV: upsert(job, vector)
+        API->>DK: upsert_job_source (dedup map) / runs (audit)
+    end
 ```
 
 **Fallback (textual steps):**
 1. UI calls `POST /api/search/run` with keywords.
-2. Each enabled adapter yields raw job dicts (all HTTP via `CompliantHttpClient`).
-3. `raw_to_job` normalizes; `is_us_job` drops non-US roles.
-4. If the job's dedup id already exists in Weaviate, skip it (no LLM/embed cost).
-5. DeepSeek enriches: years-of-experience, visa stance, skills, seniority, employer type, clearance.
-6. `derive_cap_exempt` + `is_known_h1b_sponsor` stamp sponsorship signals.
-7. Gemini embeds the job to a 3072-dim vector.
-8. Upsert into Weaviate; record source + run in DuckDB.
+2. ALL enabled adapters fetch **in parallel** (a worker + `CompliantHttpClient` per source).
+3. As each source finishes, its jobs are processed on one stream:
+   `raw_to_job` normalizes; `is_us_job` drops non-US roles (incl. foreign cities hidden in titles).
+4. With a profile, a conservative pre-filter (same role-family taxonomy as the verdict engine)
+   drops clear mismatches before any LLM spend.
+5. If the job's dedup id already exists in Weaviate, skip it (no LLM/embed cost).
+6. DeepSeek enriches: years-of-experience, visa stance, skills, seniority, employer type, clearance.
+7. `derive_cap_exempt` + `is_known_h1b_sponsor` stamp sponsorship signals.
+8. Gemini embeds the job to a 3072-dim vector (per-run budget; quota-stop is clean).
+9. Upsert into Weaviate; record source + run in DuckDB.
+10. After profile refills / scheduled refreshes, a bounded sweep retries rows whose
+    enrichment previously failed (self-healing).
 
 **Cost note:** every newly-ingested job = 1 DeepSeek call + 1 Gemini embed. The free Gemini tier caps
 at 1,000 embeds/day; ingestion and refresh are budget-capped (`embed_daily_budget`, default 800).
@@ -114,11 +129,124 @@ at 1,000 embeds/day; ingestion and refresh are budget-capped (`embed_daily_budge
 | Normalization / dedup | `normalize.py` |
 | Enrichment | `enrich.py` (DeepSeek), `sponsors.py` (H-1B), `resume.py` (resume→profile) |
 | Embeddings | `embed.py` (Gemini) |
-| Stores | `store.py` (Weaviate), `relational.py` (DuckDB) |
+| Stores | `store.py` (Weaviate), `relational.py` (`RelationalStore` Protocol + `DuckDBRelationalStore` + `make_relational_store` factory — the DB swap seam), `blob.py` (`BlobStore` + `LocalBlobStore` — the file-storage swap seam) |
+| Entitlements | `entitlements.py` (`Limits`, `resolve_limits(user_id)`, `record_usage`, `check_quota` — the single seam every per-account limit/quota resolves through) |
+| Guard rails | `security.py` (dormant rate-limit / body-size / security-headers / require-auth middleware, off by default) |
+| Observability | `logging_config.py` (`configure_logging`, called at startup) |
 | Search / scoring | `search.py`, `verdict.py`, `skills.py` |
 | Scheduler | `scheduler.py` (APScheduler, off by default) |
 | **Service layer** | `services/source_config.py` (sources.yaml + adapter construction), `services/query_service.py` (dedup, date-range, resume match, semantic scoring, saved-search counts), `services/ingestion_service.py` (ingestion / enrichment / watchlist-refresh background jobs) |
-| API | `api/main.py` (FastAPI app + routes; delegates business logic to the service layer) |
+| API | `api/main.py` (FastAPI app + routes; delegates business logic to the service layer), `api/admin.py` (operator/admin console: `/api/admin/*`, require_admin-gated) |
+| Tenancy seam | `api/deps.py` (`current_user_id` = the single auth drop-in, `effective_owner`, `owned_profile` = the authz primitive, `require_admin`) + the `enforce_profile_ownership` middleware in `api/main.py` (path routes) with `owned_profile` on query/body routes. Jobs/enrichment/vectors are global; profiles/resumes/tailored/deep-match/saved-searches are per-`user_id` and leak-proof by construction — see [multi-tenancy.md](multi-tenancy.md) |
 | Frontend | `frontend/src/` (React + Vite + TanStack Query + Tailwind) |
 
 Layering: **routes (`api/main.py`) → services (`services/*`) → repositories (`store.py` Weaviate, `relational.py` DuckDB) → schemas (`models.py`)**. Services are stateless functions taking the open stores as parameters. `RelationalStore` serializes its single DuckDB connection with a re-entrant lock (`_synchronized_methods`) because ingestion runs in a background thread alongside request handlers.
+
+---
+
+## 5. "For You" query flow (recommendation path)
+
+`GET /api/jobs?recommendation_only=true&profile_id=…&sort=match&target_min=N` — the strict
+profile-backed feed. Only roles whose **verdict is recommendable** appear (every fit gate passed;
+the only allowed caveat is "sponsorship not stated" at a sponsorship-favorable employer).
+
+```mermaid
+flowchart TD
+    Q[GET /api/jobs · recommendation_only] --> L{date_range set?}
+    L -- "yes (user picked a window)" --> W[search that window once]
+    L -- "no (default)" --> R["freshness ladder: 24h → 7d → 1m"]
+    R --> S["retrieve candidates (MATCH_WINDOW=500)"]
+    S --> V["score every candidate vs profile\n(title · skills · YoE · seniority · sponsorship ·\nclearance · location · interests · resume semantics)"]
+    V --> F{"qualified ≥ fill target (25)?"}
+    F -- no, ladder left --> R
+    F -- "yes / ladder exhausted" --> C["dedupe · sort by fit · cap 50"]
+    W --> V
+    C --> O[respond with jobs + verdicts + lookback_window]
+    C --> T{"feed sparse or stale?"}
+    T -- yes --> B["background profile refill:\ntarget titles + entry terms →\ndirect ATS + government + curated feeds\n(cooldown- and budget-bounded)\n+ retry failed enrichment"]
+```
+
+Notes:
+- The ladder **fills** (keeps widening until ~25 qualified or the ladder ends) rather than stopping at
+  the first rung with a handful of hits; the display cap is 50.
+- Picking any value in the **Date posted** pill bypasses the ladder and searches exactly that window.
+- The refill hashes the whole profile into its key, so **editing the profile re-drives the feed**.
+
+---
+
+## 6. Job lifecycle
+
+```mermaid
+stateDiagram-v2
+    [*] --> ingested: adapter fetch → normalize → US-only + profile pre-filter
+    ingested --> enriched: DeepSeek extraction (yoe, visa, skills, …)
+    ingested --> enrich_failed: LLM outage / rate limit
+    enrich_failed --> enriched: bounded retry sweep (after refills / scheduled refresh)
+    enriched --> active: embedded + upserted (is_active=true)
+    active --> closed: board snapshot no longer lists it (is_active=false)
+    closed --> active: re-listed on a board
+    active --> applied: user marks Applied (leaves the main feed)
+    active --> hidden: user hides it (excluded for that profile)
+```
+
+
+## 7. Structured resume data flow
+
+```mermaid
+flowchart LR
+    U[Resume upload / Rebuild / “Structure my resume”] --> P["parse_structured_resume (LLM, extraction-only)"]
+    P --> SR[structured_resume — typed sections]
+    SR -- UI edits (PUT) --> C[compose_resume_text_from_structured]
+    C --> RT[resume_text — canonical flat text]
+    RT --> E["Gemini embedding (hash-keyed cache → auto re-embed on change)"]
+    RT --> V[verdict: skill evidence, degree rank, YoE inference]
+    RT --> D[deep match prompt]
+```
+
+`resume_text` remains the single canonical matching source; the typed sections are its editable
+projection, kept in sync in both directions.
+
+## 8. Resume library (many resumes, one active)
+
+```mermaid
+flowchart LR
+    UP["Upload another"] --> PARSE["parse_resume_to_profile (LLM)"]
+    PARSE --> REC["ResumeRecord → resumes table + data/resumes/{profile}/{id}"]
+    REC -->|Set active| PROJ["project text/sections/structured/skills/targets → profile + active_resume_id"]
+    PROJ --> RT["resume_text (canonical)"]
+    RT --> MATCH["embedding cache re-embeds → For You re-scores"]
+```
+
+The library is a table behind the profile: a profile holds many `ResumeRecord`s but the **active** one
+is projected onto the profile's `resume_*` fields (§7). Because everything downstream reads the profile,
+no matching code changes — switching the active resume just re-projects and clears the verdict cache.
+Pre-library single uploads are lazily adopted as record 0 on first library view.
+
+## 9. Tailoring flow (pre-flight gate + catalog)
+
+```mermaid
+flowchart TD
+    T["Tailor DOCX (job + active profile)"] --> G{"rule verdict = reject<br/>OR deep-match = skip?"}
+    G -->|yes, no force| STOP["return built:false + gate reasons"]
+    G -->|no, or force:true| BUILD["resume_tailoring_gate → build + audit DOCX (private toolkit)"]
+    BUILD --> CAT["upsert tailored_resumes catalog row"]
+    CAT --> DL["download anytime (dated filename)"]
+```
+
+The deterministic JD gate (US-only, no citizenship/clearance/ITAR wall, no explicit no-sponsorship, not a
+5+-year role) runs before any model tokens are spent; a *skip* conclusion is overridable with `force`.
+Every successful build is catalogued so it stays downloadable from the Profile tab long after the response.
+
+## 10. First-run seed + retention
+
+```mermaid
+flowchart TD
+    B["startup"] --> Q{"enabled + embedding key +<br/>no seeded_at + index empty?"}
+    Q -->|yes| S["background: one bounded ingest (keyless sources) → stamp seeded_at on success"]
+    Q -->|no| N["normal startup"]
+    I["every ingest end"] --> P["prune_stale_jobs (purge_older_than, retention_days)"]
+```
+
+Jobs are filled live, never shipped as a committed snapshot (they go stale). The seed runs once; retention
+keeps the index a rolling recent window past the ghost-risk threshold. See
+[data-and-storage.md](data-and-storage.md).

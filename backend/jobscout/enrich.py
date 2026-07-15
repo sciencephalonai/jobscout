@@ -1,4 +1,4 @@
-"""LLM enrichment of a single job via DeepSeek (OpenAI-compatible client).
+"""LLM enrichment of a single job via a selectable OpenAI-compatible client.
 
 Extracts structured signals — years-of-experience range, visa-sponsorship
 stance, technical skills, seniority level, and an estimated company-size
@@ -20,11 +20,15 @@ from __future__ import annotations
 
 import json
 import logging
+import re
+import time
 from typing import Any, Literal
 
 from openai import OpenAI
 
 from jobscout.config import settings
+from jobscout.normalize import normalize_text
+from jobscout.source_intelligence import source_kind
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +44,13 @@ class EnrichmentError(Exception):
 _MAX_DESCRIPTION_CHARS = 4000
 # Cap on the number of skills returned.
 _MAX_SKILLS = 15
+# Bound a single provider stall so one new job cannot freeze the sequential
+# ingestion pipeline for the OpenAI client's much longer default timeout.
+_LLM_TIMEOUT_SECONDS = 45.0
+# The OpenAI SDK retries 429/5xx with exponential backoff + jitter. Parallel
+# ingestion bursts enrichment calls, so a single retry regularly lost jobs to
+# provider rate limits (they parked as enrichment_status='failed').
+_LLM_MAX_RETRIES = 4
 
 _VALID_VISA = {"yes", "no", "unclear", "not_mentioned"}
 _VALID_SENIORITY = {
@@ -116,10 +127,14 @@ For "employer_type": classify the hiring organization. Use "for_profit" for norm
 private companies. Only use "university"/"hospital"/"nonprofit"/"government" when the
 employer clearly is one. If unsure, return "unclear".
 
-For "visa_sponsorship": use "no" ONLY when the posting explicitly says it will not
-sponsor (e.g. "no visa sponsorship", "must have permanent authorization"). A question
-asking whether the candidate will need future sponsorship is NOT "no" — use
-"not_mentioned" or "unclear".
+For "visa_sponsorship": use "no" ONLY when the posting explicitly refuses to sponsor or
+demands permanent/indefinite authorization — e.g. "no visa sponsorship", "unable to
+sponsor", "must be authorized to work without sponsorship now or in the future", "must
+have permanent work authorization". Two things that are NOT "no" on their own: (1) a
+question asking whether the candidate will need future sponsorship, and (2) a statement
+that the candidate must be "currently authorized to work in the US" — for both, use
+"not_mentioned" or "unclear" unless it is paired with an explicit refusal to sponsor or a
+permanent-authorization requirement.
 
 TITLE: {title}
 COMPANY: {company}
@@ -133,16 +148,74 @@ DESCRIPTION:
 # ---------------------------------------------------------------------------
 
 _client: OpenAI | None = None
+_client_signature: tuple[str, str, str] | None = None
+
+SUPPORTED_LLM_PROVIDERS = frozenset({"deepseek", "nvidia"})
+
+
+def active_llm_configuration() -> tuple[str, str, str]:
+    """Return the active ``(provider, api_key, model)`` without exposing it.
+
+    NVIDIA's hosted endpoint implements the OpenAI chat-completions contract, so
+    the existing ``openai`` client is the smallest and most reliable integration
+    surface. A LangChain wrapper would be an equivalent client, not extra model
+    capability, and would add an unnecessary runtime dependency.
+    """
+    provider = (settings.llm_provider or "deepseek").strip().lower()
+    # A selected provider without a key must not disable LLM features when the
+    # other provider IS configured — NVIDIA is optional; DeepSeek is the
+    # workhorse fallback (missing-key here, 429 at call time).
+    if provider == "nvidia":
+        if not settings.nvidia_api_key and settings.deepseek_api_key:
+            return "deepseek", settings.deepseek_api_key, settings.deepseek_model
+        return "nvidia", settings.nvidia_api_key, settings.nvidia_model
+    if not settings.deepseek_api_key and settings.nvidia_api_key:
+        return "nvidia", settings.nvidia_api_key, settings.nvidia_model
+    return "deepseek", settings.deepseek_api_key, settings.deepseek_model
+
+
+# Circuit breaker: once the primary provider 429s, send calls straight to the
+# fallback for a cooldown window instead of paying the full retry/backoff tax
+# (~1 min/job against an exhausted free tier) on every single job.
+_PRIMARY_RATE_LIMIT_COOLDOWN_S = 900.0
+_primary_rate_limited_until: float = 0.0
+
+
+def fallback_llm_configuration() -> tuple[str, str, str] | None:
+    """The OTHER provider's ``(provider, api_key, model)``, if it has a key.
+
+    Lets enrichment survive a rate-limited/exhausted primary (e.g. NVIDIA's
+    free tier) by retrying once on the alternate provider instead of parking
+    jobs as ``enrichment_status='failed'``.
+    """
+    primary, _key, _model = active_llm_configuration()
+    if primary == "nvidia" and settings.deepseek_api_key:
+        return "deepseek", settings.deepseek_api_key, settings.deepseek_model
+    if primary == "deepseek" and settings.nvidia_api_key:
+        return "nvidia", settings.nvidia_api_key, settings.nvidia_model
+    return None
+
+
+def llm_is_configured() -> bool:
+    """Whether the selected provider has a configured key."""
+    _provider, api_key, _model = active_llm_configuration()
+    return bool(api_key)
 
 
 def _get_client() -> OpenAI:
-    """Return a process-wide singleton OpenAI client pointed at DeepSeek."""
-    global _client
-    if _client is None:
+    """Return a singleton client, rebuilding it if the provider changes."""
+    global _client, _client_signature
+    provider, api_key, _model = active_llm_configuration()
+    base_url = settings.nvidia_base_url if provider == "nvidia" else settings.deepseek_base_url
+    signature = (provider, api_key, base_url)
+    if _client is None or _client_signature != signature:
         _client = OpenAI(
-            api_key=settings.deepseek_api_key,
-            base_url=settings.deepseek_base_url,
+            api_key=api_key,
+            base_url=base_url,
+            timeout=_LLM_TIMEOUT_SECONDS,
+            max_retries=_LLM_MAX_RETRIES,
         )
+        _client_signature = signature
     return _client
 
 
@@ -246,13 +319,40 @@ def _validate(raw: dict[str, Any]) -> dict:
 # Recruiter / aggregator detection (heuristic, no LLM)
 # ---------------------------------------------------------------------------
 
-# Sources that are aggregators/recruiter-driven rather than direct employers.
-_AGGREGATOR_SOURCES = {"jobspy", "themuse", "jobicy", "remoteok", "workingnomads"}
-# Phrases that signal a staffing-agency / recruiter wrapper around an unnamed
-# end employer.
-_RECRUITER_PHRASES = (
-    "staffing", "recruit", "talent acquisition partner", "on behalf of our client",
-    "our client is", "confidential client", "agency", "headhunt", "rpo",
+# Strong signals in the *company name* that the named poster is a staffing or
+# recruiting business rather than the end employer.  These deliberately do not
+# run against the full description: ordinary employers routinely mention their
+# recruiting team, accommodations, agency-submission policy, or an ATS URL.
+_STAFFING_COMPANY_RE = re.compile(
+    r"\b(?:staffing|recruit(?:ing|ment)|talent solutions?|executive search|"
+    r"employment agency|placement services?|headhunt(?:ing|ers?)?|rpo)\b",
+    re.IGNORECASE,
+)
+_KNOWN_STAFFING_COMPANIES = {
+    "adecco",
+    "cybercoders",
+    "insight global",
+    "jobot",
+    "kforce",
+    "manpower",
+    "manpowergroup",
+    "motion recruitment",
+    "randstad",
+    "robert half",
+    "teksystems",
+}
+
+# Description text must explicitly say that the posting represents a client.
+# Word-boundary regexes avoid the former substring bug where ``rpo`` matched
+# inside ordinary URLs such as ``.../corporate-responsibility``.
+_CLIENT_WRAPPER_RE = re.compile(
+    r"\b(?:"
+    r"on behalf of (?:our|a|the) client|"
+    r"(?:our|a|the) client (?:is|has|seeks|is seeking|is looking)|"
+    r"(?:for|with) (?:one of )?our clients|"
+    r"client of ours|confidential client|direct client|end client"
+    r")\b",
+    re.IGNORECASE,
 )
 
 
@@ -267,24 +367,91 @@ def detect_recruiter_post(
     direct-employer postings and treat unnamed-client recruiter wrappers with
     skepticism.
     """
-    if source in _AGGREGATOR_SOURCES:
+    # Discovery aggregators and scrapers are not canonical employer postings.
+    if source_kind(source) in {"aggregator", "scraper"}:
         return True
     if not company or not company.strip():
         return True  # hidden/unnamed end employer
-    haystack = f"{company} {description or ''}".lower()
-    return any(phrase in haystack for phrase in _RECRUITER_PHRASES)
+
+    normalized_company = normalize_text(company)
+    if (
+        normalized_company in _KNOWN_STAFFING_COMPANIES
+        or _STAFFING_COMPANY_RE.search(normalized_company)
+    ):
+        return True
+
+    return bool(_CLIENT_WRAPPER_RE.search(description or ""))
 
 
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
+def chat_json(system_prompt: str, user_prompt: str) -> str | None:
+    """One JSON-mode chat completion, with provider failover.
+
+    Every LLM task in the app (enrichment, deep match, resume parsing/structuring,
+    bullet polish, tailoring) goes through here so they ALL share the same
+    resilience: the configured primary first, an automatic switch to the other
+    provider on a 429, and a short circuit-breaker so an exhausted free tier
+    doesn't tax every subsequent call.
+    """
+
+    def _complete(client: OpenAI, model: str) -> str | None:
+        completion = client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            response_format={"type": "json_object"},
+            temperature=0,
+        )
+        return completion.choices[0].message.content
+
+    def _fallback_client() -> tuple[OpenAI, str] | None:
+        fallback = fallback_llm_configuration()
+        if fallback is None:
+            return None
+        fb_provider, fb_key, fb_model = fallback
+        fb_base = (
+            settings.nvidia_base_url if fb_provider == "nvidia" else settings.deepseek_base_url
+        )
+        return OpenAI(
+            api_key=fb_key, base_url=fb_base,
+            timeout=_LLM_TIMEOUT_SECONDS, max_retries=_LLM_MAX_RETRIES,
+        ), fb_model
+
+    global _primary_rate_limited_until
+    provider, api_key, model = active_llm_configuration()
+    if not api_key:
+        raise RuntimeError(f"{provider} API key is not configured")
+
+    if time.monotonic() < _primary_rate_limited_until:
+        fb = _fallback_client()
+        if fb is not None:
+            return _complete(*fb)  # primary recently rate-limited
+
+    try:
+        return _complete(_get_client(), model)
+    except Exception as exc:  # noqa: BLE001
+        fb = _fallback_client() if "429" in str(exc) else None
+        if fb is None:
+            raise
+        _primary_rate_limited_until = time.monotonic() + _PRIMARY_RATE_LIMIT_COOLDOWN_S
+        logger.warning(
+            "LLM %s rate-limited — using the alternate provider and pausing the primary for %.0fs",
+            provider, _PRIMARY_RATE_LIMIT_COOLDOWN_S,
+        )
+        return _complete(*fb)
+
+
 def extract_enrichment(
     title: str,
     company: str | None,
     description: str | None,
 ) -> dict:
-    """Extract structured enrichment fields for a single job via DeepSeek.
+    """Extract structured enrichment fields for a single job via the active LLM.
 
     Args:
         title:       Job title.
@@ -312,30 +479,20 @@ def extract_enrichment(
     )
 
     try:
-        client = _get_client()
-        completion = client.chat.completions.create(
-            model=settings.deepseek_model,
-            messages=[
-                {"role": "system", "content": _SYSTEM_PROMPT},
-                {"role": "user", "content": user_prompt},
-            ],
-            response_format={"type": "json_object"},
-            temperature=0,
-        )
-        content = completion.choices[0].message.content
+        content = chat_json(_SYSTEM_PROMPT, user_prompt)
     except Exception as exc:
-        logger.warning("DeepSeek enrichment call failed: %s", exc)
-        raise EnrichmentError(f"DeepSeek enrichment call failed: {exc}") from exc
+        logger.warning("LLM enrichment call failed: %s", exc)
+        raise EnrichmentError(f"LLM enrichment call failed: {exc}") from exc
 
     if not content:
-        logger.warning("DeepSeek enrichment returned empty content")
-        raise EnrichmentError("DeepSeek enrichment returned empty content")
+        logger.warning("LLM enrichment returned empty content")
+        raise EnrichmentError("LLM enrichment returned empty content")
 
     try:
         parsed = json.loads(_strip_code_fences(content))
     except (ValueError, TypeError) as exc:
-        logger.warning("Failed to parse DeepSeek enrichment JSON: %s", exc)
-        raise EnrichmentError(f"Failed to parse DeepSeek enrichment JSON: {exc}") from exc
+        logger.warning("Failed to parse LLM enrichment JSON: %s", exc)
+        raise EnrichmentError(f"Failed to parse LLM enrichment JSON: {exc}") from exc
 
     if not isinstance(parsed, dict):
         logger.warning("DeepSeek enrichment JSON was not an object: %r", type(parsed))

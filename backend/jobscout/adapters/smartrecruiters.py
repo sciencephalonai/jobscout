@@ -197,6 +197,10 @@ class SmartRecruitersAdapter:
                         "url": url_value,
                         "description": description,
                         "location": location_str,
+                        # The posting's own ISO country code ("us"/"in"/…) —
+                        # without it, a trailing ", in" in the joined location
+                        # reads as Indiana to the US filter.
+                        "country": (location_obj.get("country") or "").strip() or None,
                         "posted_date": released_raw,
                         "source_job_id": posting_id,
                         "employer_type": employer_type,

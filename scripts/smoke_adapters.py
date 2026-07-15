@@ -125,7 +125,9 @@ def run_adapter(name: str, http: CompliantHttpClient, keywords: list[str],
             keywords=[], location=None, results_wanted=limit * 4, since=None, http=http
         ):
             job = raw_to_job(raw, source=name)
-            if not is_us_job(job.country, job.location_raw, job.remote_mode):
+            if not is_us_job(
+                job.country, job.location_raw, job.remote_mode, title=job.title,
+            ):
                 continue
             title_l = job.title.lower()
             if needles and not any(n in title_l for n in needles):

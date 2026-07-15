@@ -45,10 +45,13 @@ where = ["backend"]
 [tool.ruff]
 target-version = "py311"
 line-length = 100
+
+[tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
 ignore = ["E501"]
+per-file-ignores = { "backend/jobscout/api/main.py" = ["B008"], "backend/jobscout/api/admin.py" = ["B008"] }
 
-[tool.ruff.isort]
+[tool.ruff.lint.isort]
 known-first-party = ["jobscout"]
 
 [tool.mypy]

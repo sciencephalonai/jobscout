@@ -5,6 +5,19 @@ sources:
     app_key: ${ADZUNA_APP_KEY}
     countries: [us]          # JobScout is US-only
 
+  usajobs:
+    enabled: false           # OPT-IN: US federal research/data roles (cap-exempt).
+                             # Needs USAJOBS_API_KEY + USAJOBS_EMAIL in .env (free key
+                             # from developer.usajobs.gov). Federal roles skew
+                             # citizenship-required (auto-dropped before enrichment),
+                             # so run this as a deliberate gov-research sweep, not always-on.
+
+  simplify:
+    enabled: true            # SimplifyJobs New-Grad-Positions feed (GitHub, no key).
+                             # Curated explicit new-grad US tech roles (~2k active) with a
+                             # sponsorship label; citizenship-required / no-sponsorship rows
+                             # are dropped in the adapter before any enrichment spend.
+
   remotive:
     enabled: true            # free public API, no key, remote tech jobs
 
@@ -32,28 +45,54 @@ sources:
       # reaches them before the large for-profit boards (they're the scarce signal).
       # type=nonprofit → cap_exempt derived "likely" (can sponsor H-1B off-lottery).
       # VERIFIED live via direct probe (counts noted); tech-forward orgs w/ eng+data roles.
-      - {token: givewell, size: "51-200", type: nonprofit}      # (14 jobs)
-      - {token: wri, size: "1001-5000", type: nonprofit}        # World Resources Institute (1)
-      - {token: mozilla, size: "1001-5000", type: nonprofit}    # Mozilla (39 jobs)
-      - {token: khanacademy, size: "201-500", type: nonprofit}  # Khan Academy (27 jobs)
+      - {token: givewell, display_name: GiveWell, size: "51-200", type: nonprofit}      # (14 jobs)
+      - {token: wri, display_name: World Resources Institute, size: "1001-5000", type: nonprofit}        # (1)
+      - {token: mozilla, display_name: Mozilla, size: "1001-5000", type: nonprofit}    # (39 jobs)
+      - {token: khanacademy, display_name: Khan Academy, size: "201-500", type: nonprofit}  # (27 jobs)
       # (thebridgespangroup removed — Greenhouse board 404s.)
       # For-profit boards (large, mostly already-ingested → cheap reuse).
-      - {token: stripe, size: "5000+"}
-      - {token: databricks, size: "1001-5000"}
-      - {token: gitlab, size: "1001-5000"}
-      - {token: airbnb, size: "5000+"}
-      - {token: coinbase, size: "5000+"}
-      - {token: reddit, size: "1001-5000"}
-      - {token: dropbox, size: "1001-5000"}
-      - {token: robinhood, size: "1001-5000"}
-      - {token: instacart, size: "1001-5000"}
-      - {token: doordash, size: "5000+"}
-      - {token: pinterest, size: "1001-5000"}
-      - {token: brex, size: "501-1000"}
-      - {token: anthropic, size: "501-1000"}
-      - {token: notion, size: "201-500"}
-      - {token: figma, size: "501-1000"}
-      - {token: rampcom, size: "501-1000"}
+      - {token: stripe, display_name: Stripe, size: "5000+"}
+      - {token: databricks, display_name: Databricks, size: "1001-5000"}
+      - {token: gitlab, display_name: GitLab, size: "1001-5000"}
+      - {token: airbnb, display_name: Airbnb, size: "5000+"}
+      - {token: coinbase, display_name: Coinbase, size: "5000+"}
+      - {token: reddit, display_name: Reddit, size: "1001-5000"}
+      - {token: dropbox, display_name: Dropbox, size: "1001-5000"}
+      - {token: robinhood, display_name: Robinhood, size: "1001-5000"}
+      - {token: instacart, display_name: Instacart, size: "1001-5000"}
+      - {token: doordash, display_name: DoorDash, size: "5000+"}
+      - {token: pinterest, display_name: Pinterest, size: "1001-5000"}
+      - {token: brex, display_name: Brex, size: "501-1000"}
+      - {token: anthropic, display_name: Anthropic, size: "501-1000"}
+      - {token: figma, display_name: Figma, size: "501-1000"}
+      - {token: rampcom, display_name: Ramp, size: "501-1000"}
+      # Verified direct boards imported from job_search_results.md (2026-07-11).
+      - {token: lyft, display_name: Lyft, type: for_profit}
+      - {token: gumgum, display_name: GumGum, type: for_profit}
+      - {token: faradayfuture, display_name: Faraday Future, type: for_profit}
+      - {token: verve, display_name: Verve, type: for_profit}
+      - {token: biohub, display_name: Biohub, type: unclear}
+      - {token: botauto, display_name: Bot Auto, type: for_profit}
+      - {token: hasbro, display_name: Hasbro, type: for_profit}
+      - {token: otterai, display_name: Otter.ai, type: for_profit}
+      # Sponsor-heavy DS/ML-relevant boards, probed live 2026-07-05 (job counts noted).
+      # All are established H-1B filers — widens the broad preset beyond university roles.
+      - {token: datadog, display_name: Datadog, size: "5000+"}          # (407 jobs)
+      - {token: mongodb, display_name: MongoDB, size: "5000+"}          # (395)
+      - {token: samsara, display_name: Samsara, size: "1001-5000"}      # (332)
+      - {token: verkada, display_name: Verkada, size: "1001-5000"}      # (306)
+      - {token: cloudflare, display_name: Cloudflare, size: "1001-5000"}   # (239)
+      - {token: scaleai, display_name: Scale AI, size: "501-1000"}       # (179)
+      - {token: affirm, display_name: Affirm, size: "1001-5000"}       # (177)
+      - {token: flexport, display_name: Flexport, size: "1001-5000"}     # (128)
+      - {token: nuro, display_name: Nuro, size: "501-1000"}          # (94)
+      - {token: duolingo, display_name: Duolingo, size: "501-1000"}       # (66)
+      - {token: chime, display_name: Chime, size: "1001-5000"}        # (64)
+      # Probed live 2026-07-13 (counts noted). Sponsor-heavy, DS/ML/SWE-relevant.
+      - {token: asana, display_name: Asana, size: "1001-5000"}        # (145)
+      - {token: discord, display_name: Discord, size: "501-1000"}     # (55)
+      - {token: airtable, display_name: Airtable, size: "501-1000"}   # (38)
+      - {token: amplitude, display_name: Amplitude, size: "501-1000"} # (41)
 
   lever:
     enabled: true            # public per-company postings API, no key
@@ -61,6 +100,7 @@ sources:
     companies:
       - {token: spotify, size: "5000+"}
       - {token: netflix, size: "5000+"}
+      - {token: gridware, type: for_profit}
 
   ashby:
     enabled: true            # public Ashby posting API, no key; per-company boards (startups)
@@ -70,6 +110,17 @@ sources:
     companies:
       - {token: ramp, type: for_profit, size: "501-1000"}
       - {token: openai, type: for_profit, size: "1001-5000"}   # verified US board
+      # Probed live 2026-07-13 (counts noted).
+      - {token: cursor, type: for_profit, size: "51-200"}      # Anysphere (115)
+      - {token: vanta, type: for_profit, size: "501-1000"}     # (109)
+      - {token: mercor, type: for_profit, size: "51-200"}      # (63)
+      - {token: watershed, type: for_profit, size: "201-500"}  # (42)
+      - {token: linear, type: for_profit, size: "51-200"}      # (24)
+      - {token: teamworks, type: for_profit}
+      - {token: brainco, type: for_profit}
+      - {token: parspec, type: for_profit}
+      - {token: notion, type: for_profit, size: "201-500"}
+      - {token: ibotta, type: for_profit}
 
   workable:
     enabled: true            # public widget API (?details=true), no key
@@ -84,6 +135,11 @@ sources:
       - {token: dof, type: for_profit, size: "201-500"}
       - {token: m-files, type: for_profit, size: "201-500"}
       - {token: nogigiddy, type: for_profit, size: "51-200"}   # high US volume (gig roles)
+      - {token: becoming, type: for_profit}
+      - {token: multimediallc, type: for_profit}
+      - {token: roamly, type: for_profit}
+      - {token: oppo-us-research-center, type: for_profit}
+      - {token: huggingface, type: for_profit}
 
   workday:
     enabled: true            # public CXS API; universities / academic medical centers / nonprofits (cap-exempt)
@@ -97,9 +153,15 @@ sources:
       - {tenant: nyp,     region: wd1,  site: nypcareers,               type: hospital,   name: NewYork-Presbyterian}
       - {tenant: nyuhs,   region: wd12, site: nyuhscareers1,            type: hospital,   name: NYU Langone Health}
       - {tenant: trumed,  region: wd1,  site: TMC_External_Career_Site, type: hospital,   name: Truman Medical Centers}
+      - {tenant: abbott, region: wd5, site: abbottcareers, type: for_profit, name: Abbott}
+      - {tenant: bristolmyerssquibb, region: wd5, site: bms, type: for_profit, name: Bristol Myers Squibb}
+      - {tenant: jabil, region: wd5, site: Jabil_Careers, type: for_profit, name: Jabil}
+      - {tenant: disney, region: wd5, site: disneycareer, type: for_profit, name: Disney}
+      - {tenant: cvshealth, region: wd1, site: CVS_Health_Careers, type: for_profit, name: CVS Health}
+      - {tenant: fiserv, region: wd5, site: ext, type: for_profit, name: Fiserv}
 
   rippling:
-    enabled: false           # public Rippling ATS Job Board API, no key; per-company boards
+    enabled: true            # public Rippling ATS Job Board API, no key; per-company boards
     fetch_descriptions: true # one extra request per job for the full description
     # Each company: Rippling board slug (from ats.rippling.com/{slug}) + employer_type.
     # Tag cap-exempt orgs that host on Rippling as nonprofit/university; for-profit → cap_exempt "no".
@@ -125,6 +187,9 @@ sources:
     companies:
       - {token: Visa, type: for_profit}
       - {token: ServiceNow, type: for_profit}
+      - {token: NBCUniversal3, type: for_profit}
+      - {token: wayfair, type: for_profit}
+      - {token: nearmap, type: for_profit}
 
   himalayas:
     enabled: true            # public JSON API, no key required, full descriptions

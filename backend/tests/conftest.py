@@ -14,7 +14,7 @@ from fastapi.testclient import TestClient
 import jobscout.api.main as main
 import jobscout.services.query_service as query_service
 from jobscout.models import Job, JobsResponse
-from jobscout.relational import RelationalStore
+from jobscout.relational import DuckDBRelationalStore
 
 
 def _job(jid: str, title: str = "Data Engineer", company: str = "Acme") -> Job:
@@ -31,7 +31,7 @@ class _FakeAggResult:
 
 class _FakeColl:
     @property
-    def aggregate(self) -> "_FakeColl":
+    def aggregate(self) -> _FakeColl:
         return self
 
     def over_all(self, **_: object) -> _FakeAggResult:
@@ -83,7 +83,7 @@ class FakeWeaviateStore:
 def client(monkeypatch):  # noqa: ANN001, ANN201
     """A TestClient with fake Weaviate + in-memory DuckDB (lifespan builds them)."""
     monkeypatch.setattr(main, "WeaviateStore", FakeWeaviateStore)
-    monkeypatch.setattr(main, "RelationalStore", lambda *_a, **_k: RelationalStore(":memory:"))
+    monkeypatch.setattr(main, "make_relational_store", lambda *_a, **_k: DuckDBRelationalStore(":memory:"))
     # embeddings are referenced inside the query service now.
     monkeypatch.setattr(query_service, "embed_query", lambda *_a, **_k: [0.0] * 8)
 
@@ -99,3 +99,18 @@ def client(monkeypatch):  # noqa: ANN001, ANN201
 
     with TestClient(main.app) as c:
         yield c
+
+
+@pytest.fixture(autouse=True)
+def _reset_llm_breaker():
+    """Keep the LLM rate-limit circuit breaker from leaking between tests.
+
+    ``enrich._primary_rate_limited_until`` is module state: once a test exercises
+    the 429 fallback, later tests would skip the (monkeypatched) primary client
+    and try to build a real one.
+    """
+    import jobscout.enrich as enrich
+
+    enrich._primary_rate_limited_until = 0.0
+    yield
+    enrich._primary_rate_limited_until = 0.0

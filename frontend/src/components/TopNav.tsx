@@ -1,214 +1,315 @@
+// Workspace shell chrome: nav tabs, profile switcher, ingest/refresh actions, automation panel, settings.
 import { useState } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
+import {
+  ArrowClockwise,
+  ArrowUpRight,
+  BookmarkSimple,
+  Buildings,
+  CaretDown,
+  ClipboardText,
+  GearSix,
+  Question,
+  List,
+  MagnifyingGlass,
+  Plus,
+  ShieldCheck,
+  Sparkle,
+  UserCircle,
+  X,
+} from '@phosphor-icons/react'
 import { useActiveProfile } from '../ProfileContext'
 import {
-  useProfiles, useTriggerIngestion, useRefreshCompanies, useScheduler, useSetScheduler,
-  useSourceOverrides, useSetSourceOverride, useSavedSearches, useStats,
+  useProfiles,
+  useTriggerIngestion,
+  useRefreshCompanies,
+  useScheduler,
+  useSetScheduler,
+  useSourceOverrides,
+  useSetSourceOverride,
+  useSavedSearches,
+  useSourcesStatus,
+  useStats,
+  useMe,
 } from '../api/client'
 import AddToWatchlistModal from './AddToWatchlistModal'
+import SettingsModal from './SettingsModal'
+import HelpModal from './HelpModal'
 
-const TABS = [
-  { to: '/', label: 'Jobs' },
-  { to: '/my-jobs', label: 'My Jobs' },
-  { to: '/saved', label: 'Saved' },
-  { to: '/companies', label: 'Companies' },
-  { to: '/profile', label: 'Profile' },
+// The primary action does two different things depending on whether a profile is
+// active, and the label alone never made that obvious. Both variants are spelled
+// out here so the sidebar, the mobile drawer and HelpModal say the same thing.
+const PRIMARY_HELP = {
+  generic: 'Searches every source with generic tech keywords. Select a profile to target your roles instead.',
+  matched: 'Searches with your target roles and keeps only the roles that pass your eligibility gates.',
+}
+const WATCHLIST_HELP = 'Re-checks only the companies you watch — fast and cheap.'
+
+type NavIconName = 'foryou' | 'discover' | 'tracker' | 'saved' | 'companies' | 'profile' | 'admin'
+
+const NAV_ITEMS: { to: string; label: string; icon: NavIconName }[] = [
+  { to: '/for-you', label: 'For You', icon: 'foryou' },
+  { to: '/', label: 'Discover', icon: 'discover' },
+  { to: '/my-jobs', label: 'Tracker', icon: 'tracker' },
+  { to: '/saved', label: 'Saved searches', icon: 'saved' },
+  { to: '/companies', label: 'Companies', icon: 'companies' },
+  { to: '/profile', label: 'Profile', icon: 'profile' },
 ]
 
-function SettingsMenu() {
+function Glyph({ name, active = false }: { name: NavIconName; active?: boolean }) {
+  const props = { size: 18, weight: active ? 'fill' as const : 'regular' as const }
+  if (name === 'foryou') return <Sparkle {...props} />
+  if (name === 'discover') return <MagnifyingGlass {...props} />
+  if (name === 'tracker') return <ClipboardText {...props} />
+  if (name === 'saved') return <BookmarkSimple {...props} />
+  if (name === 'companies') return <Buildings {...props} />
+  if (name === 'admin') return <ShieldCheck {...props} />
+  return <UserCircle {...props} />
+}
+
+function Brand({ compact = false }: { compact?: boolean }) {
+  return (
+    <Link to="/" className="control-focus flex min-w-0 items-center gap-2.5 rounded-lg" aria-label="JobScout home">
+      <span className={`relative flex shrink-0 items-center justify-center rounded-lg border border-white/15 bg-white text-[0.68rem] font-extrabold tracking-[-0.08em] text-ink ${compact ? 'h-7 w-7' : 'h-9 w-9'}`}>
+        JS
+        <span className="absolute -right-px -top-px h-2.5 w-2.5 rounded-bl-md rounded-tr-lg bg-signal-500" aria-hidden="true" />
+      </span>
+      <span className={`${compact ? 'text-sm' : 'text-[1.02rem]'} truncate font-semibold tracking-[-0.035em] text-white`}>JobScout</span>
+    </Link>
+  )
+}
+
+function WorkspaceNav({ onNavigate, light = false }: { onNavigate?: () => void; light?: boolean }) {
+  const { pathname } = useLocation()
+  const { data: saved } = useSavedSearches()
+  const { data: me } = useMe()
+  const totalNew = (saved ?? []).reduce((total, item) => total + (item.new_count || 0), 0)
+  // The operator console is only linked for admins (route is API-guarded regardless).
+  const items = me?.is_admin
+    ? [...NAV_ITEMS, { to: '/admin', label: 'Admin', icon: 'admin' as NavIconName }]
+    : NAV_ITEMS
+
+  return (
+    <nav className="space-y-0.5" aria-label="Workspace">
+      {items.map((item) => {
+        const active = item.to === '/' ? pathname === '/' || pathname === '/jobs' : pathname.startsWith(item.to)
+        return (
+          <Link
+            key={item.to}
+            to={item.to}
+            onClick={onNavigate}
+            aria-current={active ? 'page' : undefined}
+            className={`control-focus group relative flex min-h-9 items-center gap-2.5 rounded-lg px-2.5 text-[0.8125rem] font-medium ${
+              active
+                ? light ? 'bg-ink text-white' : 'bg-white/[0.09] text-white'
+                : light ? 'text-slate-600 hover:bg-slate-100 hover:text-ink' : 'text-white/55 hover:bg-white/[0.055] hover:text-white'
+            }`}
+          >
+            {active && !light && <span className="absolute -left-4 h-5 w-0.5 rounded-r bg-signal-500" aria-hidden="true" />}
+            <Glyph name={item.icon} active={active} />
+            <span>{item.label}</span>
+            {item.to === '/saved' && totalNew > 0 && (
+              <span className={`ml-auto rounded-[0.35rem] px-1.5 py-0.5 font-mono text-[0.61rem] font-semibold ${active ? 'bg-white/15 text-white' : 'bg-signal-600 text-white'}`}>
+                {totalNew > 99 ? '99+' : totalNew}
+              </span>
+            )}
+          </Link>
+        )
+      })}
+    </nav>
+  )
+}
+
+function AutomationPanel({ dark = true }: { dark?: boolean }) {
   const [open, setOpen] = useState(false)
-  const { data: sched } = useScheduler()
-  const setSched = useSetScheduler()
+  const { data: scheduler } = useScheduler()
+  const setScheduler = useSetScheduler()
   const { data: overrides } = useSourceOverrides()
   const setOverride = useSetSourceOverride()
-  const jobspyOn = !!overrides?.jobspy
+  const jobSpyOn = !!overrides?.jobspy
+
   return (
     <div className="relative">
-      <button type="button" onClick={() => setOpen((o) => !o)}
-        className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-50">
-        Settings
+      <button
+        type="button"
+        onClick={() => setOpen((value) => !value)}
+        aria-expanded={open}
+        className={`control-focus flex h-8 w-full items-center justify-between rounded-lg px-2 text-xs font-medium ${dark ? 'text-white/55 hover:bg-white/[0.055] hover:text-white' : 'text-slate-500 hover:bg-slate-100 hover:text-ink'}`}
+      >
+        <span>Automation</span>
+        <CaretDown size={14} className={open ? 'rotate-180' : ''} />
       </button>
       {open && (
-        <div className="absolute right-0 z-30 mt-2 w-80 rounded-xl border border-slate-200 bg-white p-4 shadow-lg space-y-4">
-          <div>
-            <div className="flex items-center justify-between">
-              <span className="text-sm font-medium text-slate-700">Daily auto-refresh</span>
-              <button
-                type="button"
-                onClick={() => setSched.mutate(!sched?.enabled)}
-                className={`rounded-full px-3 py-1 text-xs font-semibold ${
-                  sched?.enabled ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'
-                }`}
-              >
-                {sched?.enabled ? 'ON' : 'OFF'}
-              </button>
-            </div>
-            <p className="mt-2 text-xs text-slate-400">
-              Off by default. A daily crawl can exhaust the Gemini free embedding tier
-              (1,000/day). Use "Get latest jobs" manually, or turn this on once you have a
-              paid embedding tier. {sched?.next_run ? `Next run: ${new Date(sched.next_run).toLocaleString()}` : ''}
-            </p>
-          </div>
-
-          <div className="border-t border-slate-100 pt-3">
-            <div className="flex items-center justify-between">
-              <span className="text-sm font-medium text-slate-700">High-risk scraper (JobSpy)</span>
-              <button
-                type="button"
-                onClick={() => setOverride.mutate({ jobspy: !jobspyOn })}
-                className={`rounded-full px-3 py-1 text-xs font-semibold ${
-                  jobspyOn ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-500'
-                }`}
-              >
-                {jobspyOn ? 'ON' : 'OFF'}
-              </button>
-            </div>
-            <p className="mt-2 text-xs text-amber-600">
-              Scrapes Indeed &amp; Glassdoor. Higher volume but compliance-sensitive — use sparingly.
-              Off by default; resets off when the backend restarts. Then click "Get latest jobs".
-            </p>
-          </div>
+        <div className={`popover-enter absolute bottom-full left-0 right-0 z-30 mb-1.5 overflow-hidden rounded-lg border p-2 shadow-xl ${dark ? 'border-white/10 bg-[#242b32] text-white' : 'border-slate-200 bg-white text-slate-700'}`}>
+          <label className={`flex cursor-pointer items-start justify-between gap-3 rounded-md px-2 py-2 text-xs ${dark ? 'hover:bg-white/[0.055]' : 'hover:bg-slate-50'}`}>
+            <span>
+              <strong className="block font-medium">Daily refresh</strong>
+              <span className={dark ? 'text-white/45' : 'text-slate-400'}>{scheduler?.enabled ? 'Keeps the feed fresh daily' : 'Off — keeps the feed fresh; uses embedding quota'}</span>
+            </span>
+            <input type="checkbox" checked={!!scheduler?.enabled} onChange={() => setScheduler.mutate(!scheduler?.enabled)} className="mt-0.5 h-4 w-4 accent-signal-500" />
+          </label>
+          <label className={`flex cursor-pointer items-start justify-between gap-3 rounded-md px-2 py-2 text-xs ${dark ? 'hover:bg-white/[0.055]' : 'hover:bg-slate-50'}`}>
+            <span>
+              <strong className="block font-medium">JobSpy scrape</strong>
+              <span className={dark ? 'text-white/45' : 'text-slate-400'}>Indeed and Glassdoor, opt-in</span>
+            </span>
+            <input type="checkbox" checked={jobSpyOn} onChange={() => setOverride.mutate({ jobspy: !jobSpyOn })} className="mt-0.5 h-4 w-4 accent-signal-500" />
+          </label>
         </div>
       )}
     </div>
   )
 }
 
-export default function TopNav() {
-  const { pathname } = useLocation()
+function Sidebar() {
   const { activeProfileId, setActiveProfileId } = useActiveProfile()
   const { data: profiles } = useProfiles()
   const ingest = useTriggerIngestion()
   const refreshCompanies = useRefreshCompanies()
   const queryClient = useQueryClient()
-  const { data: saved } = useSavedSearches()
-  const totalNew = (saved ?? []).reduce((n, s) => n + (s.new_count || 0), 0)
+  const { data: stats } = useStats()
+  const { data: sourceStatus } = useSourcesStatus()
+  const [showAddModal, setShowAddModal] = useState(false)
+  const [showSettings, setShowSettings] = useState(false)
+  const [showHelp, setShowHelp] = useState(false)
 
-  const active = profiles?.find((p) => p.id === activeProfileId)
+  const active = profiles?.find((profile) => profile.id === activeProfileId)
+  const isBusy = ingest.isPending || refreshCompanies.isPending
+  const checkedSourceCount = (sourceStatus ?? []).filter((source) => !!source.last_run_at).length
 
-  // Ingestion runs in the background, so re-pull the jobs list a few times after
-  // triggering — newly enriched + embedded jobs land over the next ~minute.
-  const scheduleRefreshes = () => {
-    for (const ms of [10_000, 30_000, 60_000]) {
-      setTimeout(() => queryClient.invalidateQueries({ queryKey: ['jobs'] }), ms)
+  const refreshJobQueries = () => {
+    for (const delay of [10_000, 30_000, 60_000]) {
+      window.setTimeout(() => queryClient.invalidateQueries({ queryKey: ['jobs'] }), delay)
     }
+    queryClient.invalidateQueries({ queryKey: ['stats'] })
+    queryClient.invalidateQueries({ queryKey: ['sources', 'status'] })
   }
 
   const getLatest = () => {
-    const keywords = active?.target_titles?.length
-      ? active.target_titles
-      : ['software engineer', 'data engineer', 'data scientist']
-    // Fetch deep (already-indexed jobs are skipped for free, so this surfaces
-    // unseen jobs to actually use the embed budget). The budget still caps the run.
-    ingest.mutate({ keywords, results_wanted: 250 }, { onSuccess: scheduleRefreshes })
+    const keywords = active?.target_titles?.length ? active.target_titles : ['software engineer', 'data engineer', 'data scientist']
+    ingest.mutate({ keywords, results_wanted: 250, profile_id: activeProfileId ?? undefined }, { onSuccess: refreshJobQueries })
   }
 
-  const getCompanies = () =>
-    refreshCompanies.mutate({ keywords: [] }, { onSuccess: scheduleRefreshes })
-
-  const [showAddModal, setShowAddModal] = useState(false)
-  const busy = ingest.isPending || refreshCompanies.isPending
-  const getLatestRan = ingest.isSuccess
-  const watchlistRan = refreshCompanies.isSuccess
-
-  // Embedding-quota signal (polled every 15s). It's set the moment a run hits the
-  // Gemini 429 and cleared on the next successful embed — so a run with quota
-  // headroom shows the green "started" message first and only flips to amber if it
-  // actually exhausts the quota; if the quota is already gone it shows amber up
-  // front; once it recovers the banner clears itself. Covers BOTH ingest buttons.
-  const { data: stats } = useStats()
-  const quotaExhausted = stats?.embed_quota_exhausted ?? false
+  const refreshWatchlist = () => refreshCompanies.mutate({ keywords: [] }, { onSuccess: refreshJobQueries })
 
   return (
-    <header className="flex-shrink-0 border-b border-slate-200 bg-white">
-      <div className="flex flex-wrap items-center gap-4 px-6 py-3">
-        <span className="text-lg font-semibold tracking-tight text-slate-900">JobScout</span>
-        <nav className="flex flex-wrap gap-1 text-sm">
-          {TABS.map((t) => {
-            const activeTab = t.to === '/' ? pathname === '/' : pathname.startsWith(t.to)
-            return (
-              <Link key={t.to} to={t.to}
-                className={`rounded-full px-3 py-1.5 font-medium ${
-                  activeTab ? 'bg-blue-50 text-blue-700' : 'text-slate-500 hover:bg-slate-100'
-                }`}>
-                {t.label}
-              </Link>
-            )
-          })}
-        </nav>
-        <div className="ml-auto flex items-center gap-2">
-          {/* Saved-search "new for me" bell */}
-          <Link to="/saved" title="New matches in your saved searches"
-            className="relative rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm text-slate-600 hover:bg-slate-50">
-            🔔
-            {totalNew > 0 && (
-              <span className="absolute -right-1.5 -top-1.5 rounded-full bg-rose-600 px-1.5 py-0.5 text-[10px] font-bold leading-none text-white">
-                {totalNew > 99 ? '99+' : totalNew}
-              </span>
-            )}
-          </Link>
-          {/* Active-profile selector */}
-          <select
-            value={activeProfileId ?? ''}
-            onChange={(e) => setActiveProfileId(e.target.value || null)}
-            className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm"
-            title="Active profile drives verdicts, sorting, and your shortlist/applied lists"
-          >
-            <option value="">No profile</option>
-            {(profiles ?? []).map((p) => (
-              <option key={p.id} value={p.id}>{p.label}</option>
-            ))}
-          </select>
-          <button
-            type="button"
-            onClick={getLatest}
-            disabled={busy}
-            className="rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
-          >
-            {ingest.isPending ? 'Fetching…' : 'Get latest jobs'}
-          </button>
-          <button
-            type="button"
-            onClick={getCompanies}
-            disabled={busy}
-            title="Re-check all watched companies for new job postings (no keyword filter — gets ALL open roles)"
-            className="rounded-lg border border-blue-600 px-3 py-1.5 text-sm font-medium text-blue-700 hover:bg-blue-50 disabled:opacity-50"
-          >
-            {refreshCompanies.isPending ? 'Fetching…' : 'Refresh watchlist'}
-          </button>
-          <button
-            type="button"
-            onClick={() => setShowAddModal(true)}
-            title="Add a company to your watchlist by specifying its ATS. 'Refresh watchlist' will then fetch its jobs."
-            className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-50"
-          >
-            + Add to watchlist
-          </button>
-          <SettingsMenu />
-        </div>
+    <aside className="hidden h-dvh w-[15.75rem] shrink-0 flex-col overflow-hidden border-r border-black/20 bg-ink px-3.5 py-3.5 xl:flex">
+      <div className="px-1 pb-3"><Brand /></div>
+      <WorkspaceNav />
+
+      <div className="mt-3 border-t border-white/10 pt-3">
+        <label htmlFor="active-profile" className="px-2 font-mono text-[0.61rem] font-semibold uppercase tracking-[0.12em] text-white/35">Matching profile</label>
+        <select
+          id="active-profile"
+          value={activeProfileId ?? ''}
+          onChange={(event) => setActiveProfileId(event.target.value || null)}
+          className="control-focus mt-1.5 h-9 w-full rounded-lg border border-white/10 bg-white/[0.065] px-2.5 text-xs font-medium text-white outline-none"
+        >
+          <option className="text-ink" value="">No active profile</option>
+          {(profiles ?? []).map((profile) => <option className="text-ink" key={profile.id} value={profile.id}>{profile.label}</option>)}
+        </select>
+        <p className="mt-1.5 line-clamp-2 px-2 text-[0.68rem] leading-4 text-white/40">
+          {active ? `Targeting ${active.target_titles.slice(0, 2).join(' and ') || active.label}.` : 'Add a resume to personalize eligibility and match evidence.'}
+        </p>
       </div>
-      {quotaExhausted ? (
-        <div className="border-t border-amber-200 bg-amber-50 px-6 py-1.5 text-xs text-amber-900">
-          <span className="font-semibold">⚠ Embedding quota reached.</span>{' '}
-          New jobs can't be saved right now (Gemini free tier = 1,000 embeds/day) — they'll resume
-          after the daily reset. Your existing jobs are unaffected. Applies to both "Get latest jobs"
-          and "Refresh watchlist".
+
+      <div className="mt-3 grid gap-1.5">
+        <button type="button" onClick={getLatest} disabled={isBusy} title={active ? PRIMARY_HELP.matched : PRIMARY_HELP.generic} className="control-focus flex h-9 w-full items-center justify-between rounded-lg bg-signal-600 px-3 text-xs font-semibold text-white hover:bg-signal-700 disabled:cursor-not-allowed disabled:opacity-50">
+          <span>{ingest.isPending ? 'Searching sources…' : active ? 'Find profile matches' : 'Get latest jobs'}</span><ArrowUpRight size={15} weight="bold" className="shrink-0" />
+        </button>
+        <p className="px-2 pb-0.5 text-[0.66rem] leading-4 text-white/40">{active ? PRIMARY_HELP.matched : PRIMARY_HELP.generic}</p>
+        <button type="button" onClick={refreshWatchlist} disabled={isBusy} title={WATCHLIST_HELP} className="control-focus flex h-9 w-full items-center justify-between rounded-lg border border-white/10 px-3 text-xs font-medium text-white/70 hover:bg-white/[0.055] hover:text-white disabled:opacity-50">
+          <span>{refreshCompanies.isPending ? 'Refreshing…' : 'Refresh watchlist'}</span><ArrowClockwise size={15} />
+        </button>
+        <p className="px-2 text-[0.66rem] leading-4 text-white/40">{WATCHLIST_HELP}</p>
+        <button type="button" onClick={() => setShowAddModal(true)} className="control-focus mt-0.5 flex h-8 items-center gap-1.5 rounded-lg px-2 text-left text-[0.68rem] font-medium text-white/45 hover:bg-white/[0.055] hover:text-white"><Plus size={13} />Add company to watch</button>
+      </div>
+
+      <div className="mt-auto border-t border-white/10 pt-2.5">
+        <div className="mb-1 flex items-center justify-between px-2 py-1.5">
+          <div>
+            <span className="font-mono text-[0.96rem] font-semibold tabular-nums text-white">{(stats?.total_jobs ?? 0).toLocaleString()}</span>
+            <span className="ml-1.5 text-[0.66rem] text-white/40">indexed</span>
+          </div>
+          <span className="flex items-center gap-1.5 text-[0.64rem] text-white/40"><span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />{checkedSourceCount || '–'} sources</span>
         </div>
-      ) : getLatestRan ? (
-        <div className="border-t border-slate-100 bg-emerald-50 px-6 py-1.5 text-xs text-emerald-800">
-          <span className="font-semibold">Searching job boards</span> for your keywords — new jobs are
-          enriched + embedded and appear here automatically in ~1 min.
-          Already-indexed jobs are skipped (free). Track per-source progress on the Sources tab.
-        </div>
-      ) : watchlistRan ? (
-        <div className="border-t border-slate-100 bg-emerald-50 px-6 py-1.5 text-xs text-emerald-800">
-          <span className="font-semibold">Checking your watched companies</span> for new postings — no
-          keyword filter, fetches ALL open roles from each company. New jobs appear here in ~1 min.
-          Already-indexed jobs are skipped (free).
-        </div>
-      ) : null}
+        <AutomationPanel />
+        <button type="button" onClick={() => setShowHelp(true)} className="control-focus flex h-8 w-full items-center gap-2 rounded-lg px-2 text-xs font-medium text-white/55 hover:bg-white/[0.055] hover:text-white"><Question size={16} />How JobScout works</button>
+        <button type="button" onClick={() => setShowSettings(true)} className="control-focus flex h-8 w-full items-center gap-2 rounded-lg px-2 text-xs font-medium text-white/55 hover:bg-white/[0.055] hover:text-white"><GearSix size={16} />Data & backend</button>
+      </div>
+
       {showAddModal && <AddToWatchlistModal onClose={() => setShowAddModal(false)} />}
-    </header>
+      {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
+      {showHelp && <HelpModal onClose={() => setShowHelp(false)} />}
+    </aside>
+  )
+}
+
+function MobileDrawer({ onClose }: { onClose: () => void }) {
+  const { activeProfileId, setActiveProfileId } = useActiveProfile()
+  const { data: profiles } = useProfiles()
+  const ingest = useTriggerIngestion()
+  const refreshCompanies = useRefreshCompanies()
+  const [showSettings, setShowSettings] = useState(false)
+  const [showAddModal, setShowAddModal] = useState(false)
+  const active = profiles?.find((profile) => profile.id === activeProfileId)
+  const busy = ingest.isPending || refreshCompanies.isPending
+
+  const getLatest = () => {
+    const keywords = active?.target_titles?.length ? active.target_titles : ['software engineer', 'data engineer', 'data scientist']
+    ingest.mutate({ keywords, results_wanted: 250, profile_id: activeProfileId ?? undefined })
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 xl:hidden" role="dialog" aria-modal="true" aria-label="Workspace menu">
+      <button type="button" aria-label="Close menu" onClick={onClose} className="absolute inset-0 bg-ink/45 backdrop-blur-[2px]" />
+      <aside className="relative flex h-full w-[min(19rem,calc(100vw-2rem))] flex-col overflow-y-auto border-r border-slate-200 bg-[#fbfcfa] p-3.5 shadow-2xl">
+        <div className="mb-3 flex items-center justify-between rounded-lg bg-ink px-2.5 py-2">
+          <Brand compact />
+          <button type="button" onClick={onClose} className="control-focus flex h-7 w-7 items-center justify-center rounded-md text-white/60 hover:bg-white/10 hover:text-white" aria-label="Close menu"><X size={17} /></button>
+        </div>
+        <WorkspaceNav onNavigate={onClose} light />
+
+        <div className="mt-4 border-t border-slate-200 pt-3">
+          <label htmlFor="mobile-active-profile" className="section-label px-2">Matching profile</label>
+          <select id="mobile-active-profile" value={activeProfileId ?? ''} onChange={(event) => setActiveProfileId(event.target.value || null)} className="control-focus mt-1.5 h-9 w-full rounded-lg border border-slate-200 bg-white px-2.5 text-xs font-medium text-slate-700 outline-none">
+            <option value="">No active profile</option>
+            {(profiles ?? []).map((profile) => <option key={profile.id} value={profile.id}>{profile.label}</option>)}
+          </select>
+        </div>
+
+        <div className="mt-3 grid gap-1.5">
+          <button type="button" onClick={getLatest} disabled={busy} className="control-focus flex h-9 items-center justify-between rounded-lg bg-signal-600 px-3 text-xs font-semibold text-white disabled:opacity-50"><span>{ingest.isPending ? 'Searching sources…' : active ? 'Find profile matches' : 'Get latest jobs'}</span><ArrowUpRight size={15} className="shrink-0" /></button>
+          <p className="px-2 pb-0.5 text-[0.66rem] leading-4 text-slate-500">{active ? PRIMARY_HELP.matched : PRIMARY_HELP.generic}</p>
+          <button type="button" onClick={() => refreshCompanies.mutate({ keywords: [] })} disabled={busy} className="control-focus flex h-9 items-center justify-between rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700 disabled:opacity-50"><span>{refreshCompanies.isPending ? 'Refreshing…' : 'Refresh watchlist'}</span><ArrowClockwise size={15} /></button>
+          <p className="px-2 text-[0.66rem] leading-4 text-slate-500">{WATCHLIST_HELP}</p>
+          <button type="button" onClick={() => setShowAddModal(true)} className="control-focus flex h-8 items-center gap-1.5 rounded-lg px-2 text-xs font-medium text-slate-500 hover:bg-slate-100"><Plus size={13} />Add company to watch</button>
+        </div>
+
+        <div className="mt-auto border-t border-slate-200 pt-2">
+          <AutomationPanel dark={false} />
+          <button type="button" onClick={() => setShowSettings(true)} className="control-focus flex h-8 w-full items-center gap-2 rounded-lg px-2 text-xs font-medium text-slate-500 hover:bg-slate-100 hover:text-ink"><GearSix size={16} />Data & backend</button>
+        </div>
+
+        {showAddModal && <AddToWatchlistModal onClose={() => setShowAddModal(false)} />}
+        {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
+      </aside>
+    </div>
+  )
+}
+
+export default function TopNav() {
+  const [menuOpen, setMenuOpen] = useState(false)
+
+  return (
+    <>
+      <Sidebar />
+      <header className="fixed inset-x-0 top-0 z-40 flex h-14 items-center border-b border-black/20 bg-ink px-3 xl:hidden">
+        <Brand compact />
+        <button type="button" onClick={() => setMenuOpen(true)} className="control-focus ml-auto flex h-8 w-8 items-center justify-center rounded-lg text-white/70 hover:bg-white/10 hover:text-white" aria-label="Open workspace menu"><List size={20} /></button>
+      </header>
+      {menuOpen && <MobileDrawer onClose={() => setMenuOpen(false)} />}
+    </>
   )
 }

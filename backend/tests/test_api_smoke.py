@@ -7,6 +7,7 @@ between modules can't silently break an endpoint's contract.
 
 from __future__ import annotations
 
+import jobscout.resume as resume
 import jobscout.services.ingestion_service as ingestion_service
 
 
@@ -66,6 +67,86 @@ def test_profiles_crud(client):
     assert any(p["id"] == pid for p in client.get("/api/profiles").json())
     assert client.get(f"/api/profiles/{pid}").status_code == 200
     assert client.delete(f"/api/profiles/{pid}").status_code == 200
+
+
+def test_profile_edit_persists_the_full_canonical_resume_text(client):
+    original = "Alex Example\nExperience: Python and SQL\n" + ("evidence " * 4_000)
+    created = client.post("/api/profiles", json={"label": "p1", "resume_text": original})
+    assert created.status_code == 200
+    profile = created.json()
+    profile["skills"] = ["python", "sql"]
+    profile["target_titles"] = ["data engineer"]
+    profile["resume_text"] = original + "\nNew project: FastAPI."
+
+    updated = client.put(f"/api/profiles/{profile['id']}", json=profile)
+    assert updated.status_code == 200
+    saved = client.get(f"/api/profiles/{profile['id']}").json()
+    assert saved["resume_text"] == profile["resume_text"]
+    assert saved["skills"] == ["python", "sql"]
+
+
+def test_structured_stale_flips_on_raw_text_edit_and_clears_on_structured_edit(client):
+    # A profile that has both raw text and a typed structured view.
+    created = client.post("/api/profiles", json={
+        "label": "p", "resume_text": "Original text.", "structured_resume": {"summary": "orig"},
+    }).json()
+    assert created["structured_stale"] is False
+
+    # Raw-text edit (structured unchanged) → typed cards now lag → flag True.
+    created["resume_text"] = "Edited text with new content."
+    client.put(f"/api/profiles/{created['id']}", json=created).raise_for_status()
+    assert client.get(f"/api/profiles/{created['id']}").json()["structured_stale"] is True
+
+    # A structured edit makes structured the source again → flag clears.
+    p = client.get(f"/api/profiles/{created['id']}").json()
+    p["structured_resume"]["summary"] = "revised"
+    client.put(f"/api/profiles/{created['id']}", json=p).raise_for_status()
+    assert client.get(f"/api/profiles/{created['id']}").json()["structured_stale"] is False
+
+
+def test_profile_can_attach_a_saved_resume_without_losing_preferences(client):
+    source = client.post(
+        "/api/profiles",
+        json={
+            "label": "complete resume",
+            "skills": ["python", "sql", "pytorch"],
+            "target_titles": ["machine learning engineer"],
+            "resume_text": "EDUCATION\nExample University\n\nPROJECTS\nBuilt a model.",
+        },
+    ).json()
+    target = client.post(
+        "/api/profiles",
+        json={
+            "label": "matcher preferences",
+            "skills": ["docker"],
+            "target_titles": ["data engineer"],
+            "needs_sponsorship": True,
+        },
+    ).json()
+
+    attached = client.post(
+        f"/api/profiles/{target['id']}/attach-resume/{source['id']}"
+    )
+    assert attached.status_code == 200
+    saved = attached.json()
+    assert saved["resume_text"] == source["resume_text"]
+    assert [section["heading"] for section in saved["resume_sections"]] == ["Education", "Projects"]
+    assert saved["skills"] == ["python", "sql", "pytorch", "docker"]
+    assert saved["target_titles"] == ["data engineer", "machine learning engineer"]
+    assert saved["needs_sponsorship"] is True
+
+
+def test_original_resume_can_be_downloaded_locally(client, monkeypatch, tmp_path):
+    monkeypatch.setattr(resume.settings, "resume_storage_dir", str(tmp_path))
+    created = client.post(
+        "/api/profiles",
+        json={"label": "p1", "resume_filename": "resume.txt", "resume_content_type": "text/plain"},
+    ).json()
+    resume.store_original_resume(created["id"], "resume.txt", b"original resume")
+    downloaded = client.get(f"/api/profiles/{created['id']}/resume")
+    assert downloaded.status_code == 200
+    assert downloaded.content == b"original resume"
+    assert downloaded.headers["content-type"].startswith("text/plain")
 
 
 def test_job_state_and_by_state(client):

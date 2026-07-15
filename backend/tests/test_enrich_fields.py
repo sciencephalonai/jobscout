@@ -76,3 +76,37 @@ def test_recruiter_phrase_in_text() -> None:
 
 def test_direct_employer_is_not_recruiter() -> None:
     assert detect_recruiter_post("Stripe", "greenhouse", "Join our payments team") is False
+
+
+def test_all_discovery_sources_are_recruiter_posts() -> None:
+    assert detect_recruiter_post("Acme", "himalayas", "Great role") is True
+    assert detect_recruiter_post("Acme", "adzuna", "Great role") is True
+
+
+def test_direct_ats_boilerplate_and_urls_are_not_recruiter_signals() -> None:
+    description = """
+    Our recruiting team can provide a reasonable accommodation during the
+    recruitment process. We do not accept unsolicited resumes from agencies.
+    Learn more at https://example.com/corporate-responsibility.
+    """
+    assert detect_recruiter_post("OpenAI", "ashby", description) is False
+
+
+def test_client_facing_work_is_not_a_client_wrapper() -> None:
+    assert detect_recruiter_post(
+        "Deloitte", "workday", "Build client-facing analytics products with our team."
+    ) is False
+
+
+def test_staffing_company_name_is_a_strong_signal() -> None:
+    assert detect_recruiter_post(
+        "Acme Staffing Solutions", "greenhouse", "Join our engineering team."
+    ) is True
+    assert detect_recruiter_post("TEKsystems", "workday", "Software role") is True
+    assert detect_recruiter_post("Robert Half, Inc.", "workday", "Software role") is True
+
+
+def test_explicit_client_wrapper_on_direct_ats_is_recruiter() -> None:
+    assert detect_recruiter_post(
+        "Talent Co", "greenhouse", "Our client is seeking a data engineer."
+    ) is True

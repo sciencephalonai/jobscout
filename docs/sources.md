@@ -1,6 +1,7 @@
 # Sources & adapters
 
-JobScout pulls jobs from 18 adapters. They split into two kinds, which matters for how you add coverage.
+JobScout pulls jobs from 20 adapters. They split into a few kinds, which matters both for how you
+add coverage and for how each job is labeled/ranked (see the classification below).
 
 ```mermaid
 flowchart TD
@@ -11,6 +12,10 @@ flowchart TD
     end
     subgraph ATS["Per-company ATS boards (you curate slugs)"]
       A2["Greenhouse, Lever, Ashby, Workable,<br/>Workday, Rippling, Recruitee, SmartRecruiters"]
+    end
+    Q --> CUR
+    subgraph CUR["Curated feeds & government"]
+      A3["SimplifyJobs new-grad list (GitHub)<br/>USAJobs (opt-in, needs free key)"]
     end
 ```
 
@@ -39,10 +44,33 @@ flowchart TD
 | TheMuse | Aggregator | Public API. |
 | RSS | Aggregator | Generic feed reader (e.g. HigherEdJobs). |
 | JobRightAI | Aggregator | Parses SSR JSON; **fragile**, ships `enabled: false`. |
+| Simplify | Curated feed | SimplifyJobs New-Grad-Positions `listings.json` (GitHub, no key). Explicit new-grad US roles with a sponsorship label; citizenship-required / no-sponsorship rows dropped in-adapter. Stamps `new_grad_program`. |
+| USAJobs | Government | `data.usajobs.gov/api/search`; opt-in (`USAJOBS_API_KEY` + `USAJOBS_EMAIL`). Per-keyword queries; citizenship-only postings dropped pre-enrichment. |
 | JobSpy | Scraper | High-risk (LinkedIn/Indeed); `enabled: false`. |
 
 All HTTP goes through `CompliantHttpClient` (robots.txt, per-domain rate limit, 429/503 backoff). Adding
 an adapter inherits compliance automatically.
+
+
+---
+
+## Source classification (`source_intelligence.py`)
+
+Every job carries a provenance kind that drives the UI badge, the `direct_sources_only` filter, the
+For You refill's source set, and dedup tiebreaks (lower authority wins the canonical apply URL):
+
+```mermaid
+flowchart LR
+    S[job.source] --> K{kind}
+    K -- greenhouse, lever, ashby, workable,\nworkday, rippling, recruitee, smartrecruiters --> P["primary (authority 0) — Direct badge"]
+    K -- usajobs --> G["government (authority 0) — Direct badge"]
+    K -- simplify --> C["curated (authority 1) — Direct badge,\nloses dedup ties to a true ATS copy"]
+    K -- jobspy --> X["scraper (authority 3)"]
+    K -- everything else --> A["aggregator (authority 2) — Discovery badge"]
+```
+
+The **For You refill** fetches from `primary | government | curated` only (aggregators are for broad
+Discover searches, not the recommendation feed).
 
 ---
 

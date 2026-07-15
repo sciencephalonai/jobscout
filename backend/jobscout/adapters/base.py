@@ -155,7 +155,7 @@ class CompliantHttpClient:
         ``Disallow: /`` aimed at scrapers, which must not block their own API.
         """
         parsed = urlparse(url)
-        domain = (parsed.netloc or "").lower().lstrip("www.")
+        domain = (parsed.netloc or "").lower().removeprefix("www.")
 
         # 1. Explicit blocklist — always enforced, even for API sources.
         if domain in self._blocked_domains:
@@ -196,7 +196,12 @@ class CompliantHttpClient:
     # ------------------------------------------------------------------
 
     def get(
-        self, url: str, params: dict | None = None, *, api_source: bool = False
+        self,
+        url: str,
+        params: dict | None = None,
+        *,
+        api_source: bool = False,
+        headers: dict | None = None,
     ) -> httpx.Response:
         """Perform a GET request, enforcing all compliance rules.
 
@@ -212,8 +217,14 @@ class CompliantHttpClient:
         API call: the robots.txt check (step 3) and crawl-delay lookup are
         skipped, but the blocklist and a default rate limit still apply. Pass it
         from adapters whose ``method == "api"``.
+
+        ``headers`` supplies per-request headers (merged over the session's fixed
+        User-Agent) — needed by key-authenticated APIs such as USAJobs that require
+        an ``Authorization-Key`` header.
         """
-        return self._send("GET", url, api_source=api_source, params=params)
+        return self._send(
+            "GET", url, api_source=api_source, params=params, headers=headers
+        )
 
     def post(
         self,

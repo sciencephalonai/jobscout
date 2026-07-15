@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import json
 
+import jobscout.resume as resume
 from jobscout.models import Job, UserProfile
-from jobscout.resume import extract_resume_text
+from jobscout.resume import extract_resume_sections, extract_resume_text
 from jobscout.verdict import _skill_score
 
 # ── Text extraction (no LLM) ──────────────────────────────────────────────────
@@ -30,6 +31,36 @@ def test_extract_unknown_extension_falls_back_to_decode():
 
 def test_extract_empty():
     assert extract_resume_text("x.txt", b"") == ""
+
+
+def test_resume_sections_preserve_standard_and_custom_headings():
+    sections = extract_resume_sections(
+        "Candidate Name\nEDUCATION\nMSc in Data Science\n\nWORK EXPERIENCE\nAcme\n\nPUBLICATIONS\nPaper A\n\nOPEN SOURCE\nProject B"
+    )
+    assert [section.heading for section in sections] == [
+        "Additional information", "Education", "Work experience", "Publications", "OPEN SOURCE",
+    ]
+    assert sections[-1].content == "Project B"
+
+
+def test_resume_sections_recover_flattened_json_resume_structure():
+    sections = extract_resume_sections(
+        "name V education institution UMD degree MS skills programming_languages Python SQL "
+        "achievements_publications title Paper experience company Acme title Data Engineer "
+        "projects name Portfolio technologies React"
+    )
+    assert [section.heading for section in sections] == [
+        "Education", "Skills", "Achievements & publications", "Work experience", "Projects",
+    ]
+    assert "UMD" in sections[0].content
+    assert "Acme" in sections[3].content
+
+
+def test_original_resume_is_saved_with_a_safe_local_name(tmp_path, monkeypatch):
+    monkeypatch.setattr(resume.settings, "resume_storage_dir", str(tmp_path))
+    name = resume.store_original_resume("profile-1", "../V Resume.pdf", b"original bytes")
+    assert name == "V Resume.pdf"
+    assert resume.resume_file_path("profile-1", name).read_bytes() == b"original bytes"
 
 
 # ── Matched + gaps (the truthfulness rule) ───────────────────────────────────

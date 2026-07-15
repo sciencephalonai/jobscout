@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Iterator
+from contextlib import suppress
 from datetime import UTC, datetime
 from typing import Any
 
@@ -220,15 +221,11 @@ def _row_to_dict(row: Any) -> dict | None:
         if description is not None:
             result["description"] = description
         if salary_min is not None:
-            try:
+            with suppress(ValueError, TypeError):
                 result["salary_min"] = float(salary_min)
-            except (ValueError, TypeError):
-                pass
         if salary_max is not None:
-            try:
+            with suppress(ValueError, TypeError):
                 result["salary_max"] = float(salary_max)
-            except (ValueError, TypeError):
-                pass
         if currency is not None:
             result["salary_currency"] = str(currency)
         if posted_date is not None:

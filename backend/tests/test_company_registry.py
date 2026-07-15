@@ -8,13 +8,13 @@ from pathlib import Path
 import pytest
 
 from jobscout.models import Company
-from jobscout.relational import RelationalStore
+from jobscout.relational import DuckDBRelationalStore
 
 
 @pytest.fixture()
 def store():
     path = Path(tempfile.mktemp(suffix=".duckdb"))
-    s = RelationalStore(db_path=str(path))
+    s = DuckDBRelationalStore(db_path=str(path))
     yield s
     s.close()
     path.unlink(missing_ok=True)
@@ -53,3 +53,11 @@ def test_touch_updates_open_roles_and_last_checked(store):
     store.touch_company("lever", "x", 42)
     c = store.get_company("lever", "x")
     assert c.open_roles == 42 and c.last_checked is not None
+
+
+def test_smartrecruiters_company_roundtrip(store):
+    store.upsert_company(Company(
+        slug="NBCUniversal3", ats="smartrecruiters", name="NBCUniversal",
+    ))
+    company = store.get_company("smartrecruiters", "NBCUniversal3")
+    assert company is not None and company.name == "NBCUniversal"

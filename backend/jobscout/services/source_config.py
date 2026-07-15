@@ -26,12 +26,15 @@ from jobscout.adapters import (
     RemotiveAdapter,
     RipplingAdapter,
     RssAdapter,
+    SimplifyAdapter,
     SmartRecruitersAdapter,
     TheMuseAdapter,
+    USAJobsAdapter,
     WorkableAdapter,
     WorkdayAdapter,
     WorkingNomadsAdapter,
 )
+from jobscout.source_intelligence import source_authority
 
 # Runtime source enable/disable overrides (in-memory, default off). Only these
 # high-risk sources can be toggled on from the UI; everything else uses sources.yaml.
@@ -42,21 +45,16 @@ _RUNTIME_SOURCE_OVERRIDES: dict[str, bool] = {}
 # first so the freshest, most authoritative jobs land before aggregators.
 _SOURCE_ORDER = [
     "greenhouse", "lever", "ashby", "workable", "workday", "rippling",
-    "recruitee", "smartrecruiters", "adzuna", "remotive", "arbeitnow",
+    "recruitee", "smartrecruiters", "usajobs", "simplify", "adzuna", "remotive", "arbeitnow",
     "jobicy", "remoteok", "workingnomads", "themuse", "himalayas", "rss",
     "jobrightai", "jobspy",
 ]
 
-# Source authority for dedup tiebreaks (lower = more authoritative).
-_SOURCE_AUTHORITY: dict[str, int] = {
-    "greenhouse": 0, "lever": 0, "workday": 0, "workable": 0, "rippling": 0, "ashby": 0,
-    "recruitee": 0, "smartrecruiters": 0,
-    "adzuna": 1,
-    "remotive": 2, "arbeitnow": 2, "jobicy": 2,
-    "remoteok": 2, "workingnomads": 2, "themuse": 2, "himalayas": 2, "rss": 2, "jobrightai": 2,
-    "jobspy": 3,
-}
-_DEFAULT_AUTHORITY = 2
+# Kept as compatibility exports for the query and ingestion services.  The
+# canonical classification lives in source_intelligence.py so the API can expose
+# exactly the same provenance that deduplication uses.
+_SOURCE_AUTHORITY = {name: source_authority(name) for name in _SOURCE_ORDER}
+_DEFAULT_AUTHORITY = source_authority(None)
 
 
 def _load_sources_cfg() -> dict[str, Any]:
@@ -64,11 +62,30 @@ def _load_sources_cfg() -> dict[str, Any]:
     with open("sources.yaml") as f:
         cfg = yaml.safe_load(f) or {}
     cfg = _merge_discovered(cfg)
+    cfg = _merge_company_targets(cfg)
     # Apply runtime overrides (e.g. the UI's high-risk JobSpy toggle) last.
     if _RUNTIME_SOURCE_OVERRIDES:
         sources = cfg.setdefault("sources", {})
         for name, enabled in _RUNTIME_SOURCE_OVERRIDES.items():
             sources.setdefault(name, {})["enabled"] = enabled
+    return cfg
+
+
+def _merge_company_targets(cfg: dict[str, Any]) -> dict[str, Any]:
+    """Attach the curated Companies-tab targets without making them adapters.
+
+    Only rows with a verified public ATS are also represented under ``sources``.
+    Direct-only targets stay registry links and can never accidentally enter an
+    ingestion run.
+    """
+    try:
+        with open("data/company_targets.yaml") as f:
+            target_cfg = yaml.safe_load(f) or {}
+    except FileNotFoundError:
+        return cfg
+    targets = target_cfg.get("companies") or []
+    if isinstance(targets, list):
+        cfg["company_targets"] = targets
     return cfg
 
 
@@ -113,7 +130,11 @@ def _build_adapters(sources_cfg: dict[str, Any]) -> list[Any]:
         cfg = sources_cfg.get(name, {})
         if not cfg.get("enabled", False):
             continue
-        if name == "adzuna":
+        if name == "usajobs":
+            adapters.append(USAJobsAdapter())
+        elif name == "simplify":
+            adapters.append(SimplifyAdapter())
+        elif name == "adzuna":
             adapters.append(AdzunaAdapter(countries=cfg.get("countries", ["us"])))
         elif name == "remotive":
             adapters.append(RemotiveAdapter())
@@ -172,7 +193,7 @@ def _build_adapters(sources_cfg: dict[str, Any]) -> list[Any]:
 
 
 def _company_size_map(sources_cfg: dict[str, Any]) -> dict[str, str]:
-    """Map company token (lowercased) -> size bucket, from greenhouse/lever config."""
+    """Map configured board tokens and display names to their size bucket."""
     out: dict[str, str] = {}
     for key in ("greenhouse", "lever"):
         for c in sources_cfg.get(key, {}).get("companies", []) or []:
@@ -181,6 +202,9 @@ def _company_size_map(sources_cfg: dict[str, Any]) -> dict[str, str]:
                 size = c.get("size")
                 if tok and size:
                     out[str(tok).lower()] = str(size)
+                    display_name = c.get("display_name") or c.get("company")
+                    if display_name:
+                        out[str(display_name).lower()] = str(size)
     return out
 
 

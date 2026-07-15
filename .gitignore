@@ -5,6 +5,9 @@
 # keep the sanitized template (this repo uses env.example)
 !env.example
 !.env.example
+# local backup of the template — may contain real values, never commit
+.env.example.original
+.env.*.original
 
 # ─── Databases / local data ───────────────────────────────────────────────────
 *.duckdb
@@ -12,6 +15,9 @@
 *conflicted copy*
 # Weaviate index export (large, regenerable via scripts/export_weaviate.py)
 data/*.jsonl.gz
+# Original resumes are local-only personal data, never source artifacts.
+data/resumes/
+data/tailored-resumes/
 # Snapshot backups (may contain real keys — never publish)
 jobscout_BACKUP_*/
 

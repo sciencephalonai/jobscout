@@ -3,25 +3,124 @@
 @tailwind utilities;
 
 @layer base {
+  :root {
+    --canvas: #eef0ed;
+    --paper: #fbfcfa;
+    --paper-strong: #ffffff;
+    --ink: #151a1f;
+    --muted: #667078;
+    --line: #d8dcd7;
+    --line-strong: #c3c9c3;
+    --signal: #ed552b;
+    --signal-soft: #fff0e9;
+    --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+    color-scheme: light;
+  }
+
   html {
-    font-family: 'Inter', ui-sans-serif, system-ui, -apple-system, sans-serif;
+    font-family: 'Onest Variable', 'Avenir Next', ui-sans-serif, system-ui, -apple-system, sans-serif;
+    background: var(--canvas);
+  }
+
+  /* The app is a fixed-viewport shell (AppShell = h-dvh) and every scrollable region
+     is an inner container (.scrollbar-thin / .job-list-scroll / modal bodies). Lock the
+     page itself so no outer/page scrollbar ever appears — inner scrollbars are intended. */
+  html,
+  body,
+  #root {
+    height: 100%;
+    overflow: hidden;
+    overscroll-behavior: none;
   }
 
   body {
-    @apply bg-slate-50 text-slate-900 antialiased;
+    @apply m-0 min-w-0 bg-[#eef0ed] text-[#151a1f] antialiased;
+    font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
   }
 
   * {
     @apply box-border;
   }
+
+  button,
+  a,
+  select,
+  input,
+  textarea {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  button,
+  a[role='button'] {
+    transition-property: color, background-color, border-color, opacity, transform;
+    transition-duration: 150ms;
+    transition-timing-function: var(--ease-out);
+  }
+
+  button:active:not(:disabled),
+  a[role='button']:active {
+    transform: scale(0.98);
+  }
+
+  ::selection {
+    background: #ffc5ad;
+    color: #401109;
+  }
+}
+
+@layer components {
+  .workspace-surface {
+    @apply border border-[#d8dcd7] bg-white;
+    border-radius: 0.75rem;
+    box-shadow: 0 1px 0 rgba(21, 26, 31, 0.03);
+  }
+
+  .page-shell {
+    @apply h-[calc(100dvh-3.5rem)] min-h-0 overflow-y-auto px-3 py-3 sm:px-4 xl:h-dvh xl:px-5 xl:py-4;
+  }
+
+  .page-header {
+    @apply mb-4 flex flex-col gap-3 border-b border-[#d8dcd7] pb-4 sm:flex-row sm:items-end sm:justify-between;
+  }
+
+  .page-title {
+    @apply text-[1.35rem] font-semibold leading-tight tracking-[-0.035em] text-[#151a1f];
+  }
+
+  .page-description {
+    @apply mt-1 max-w-2xl text-[0.8125rem] leading-5 text-slate-500;
+  }
+
+  .section-label {
+    @apply font-mono text-[0.625rem] font-semibold uppercase tracking-[0.12em] text-slate-400;
+  }
+
+  .control-focus {
+    @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-signal-500 focus-visible:ring-offset-1;
+  }
+
+  .tag {
+    @apply inline-flex items-center rounded-[0.3rem] px-1.5 py-0.5 text-[0.68rem] font-medium;
+  }
+
+  .popover-enter {
+    transform-origin: top right;
+    animation: popover-in 160ms var(--ease-out) both;
+  }
+}
+
+@keyframes popover-in {
+  from { opacity: 0; transform: translateY(-3px) scale(0.985); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
 }
 
 /* Rendered (sanitized) HTML job descriptions. Tailwind's preflight strips
    default list/heading/paragraph styling, so restore it here. */
 .job-description {
   font-size: 0.875rem;
-  line-height: 1.625;
-  color: #334155; /* slate-700 */
+  line-height: 1.68;
+  color: #3c464e;
+  max-width: 78ch;
 }
 .job-description p { margin: 0 0 0.75rem; }
 .job-description ul { list-style: disc; padding-left: 1.25rem; margin: 0 0 0.75rem; }
@@ -30,9 +129,9 @@
 .job-description h1,
 .job-description h2,
 .job-description h3,
-.job-description h4 { font-weight: 600; color: #1e293b; margin: 1rem 0 0.4rem; }
-.job-description a { color: #2563eb; text-decoration: underline; }
-.job-description strong, .job-description b { font-weight: 600; color: #1e293b; }
+.job-description h4 { font-weight: 650; color: #151a1f; margin: 1.15rem 0 0.4rem; letter-spacing: -0.015em; }
+.job-description a { color: #d43d17; text-decoration: underline; text-underline-offset: 2px; }
+.job-description strong, .job-description b { font-weight: 650; color: #151a1f; }
 .job-description em { font-style: italic; }
 .job-description br { content: ""; }
 .job-description > *:last-child { margin-bottom: 0; }
@@ -40,7 +139,7 @@
 @layer utilities {
   .scrollbar-thin {
     scrollbar-width: thin;
-    scrollbar-color: #cbd5e1 transparent;
+    scrollbar-color: #c3c9c3 transparent;
   }
 
   .scrollbar-thin::-webkit-scrollbar {
@@ -52,7 +151,33 @@
   }
 
   .scrollbar-thin::-webkit-scrollbar-thumb {
-    background-color: #cbd5e1;
+    background-color: #c3c9c3;
     border-radius: 3px;
+  }
+
+  /* Dense result panes use a narrow, low-contrast native-like scrollbar.
+     Keeping it scoped prevents a page-wide custom-scrollbar feel. */
+  .job-list-scroll {
+    scrollbar-width: thin;
+    scrollbar-color: #c3c9c3 transparent;
+  }
+
+  .job-list-scroll::-webkit-scrollbar { width: 8px; }
+  .job-list-scroll::-webkit-scrollbar-track { background: transparent; }
+  .job-list-scroll::-webkit-scrollbar-thumb {
+    border: 2px solid transparent;
+    border-radius: 999px;
+    background: #c3c9c3;
+    background-clip: padding-box;
+  }
+  .job-list-scroll:hover::-webkit-scrollbar-thumb { background-color: #8e9790; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
   }
 }

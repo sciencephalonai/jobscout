@@ -10,10 +10,11 @@ from __future__ import annotations
 import datetime as dt
 from typing import Any
 
-from weaviate.classes.query import Filter, MetadataQuery, Sort
+from weaviate.classes.query import Filter, MetadataQuery
 
 from jobscout.embed import embed_query
-from jobscout.models import Job, JobsResponse
+from jobscout.models import GHOST_STALE_DAYS, Job, JobsResponse
+from jobscout.source_intelligence import CURATED_SOURCES, GOVERNMENT_SOURCES, PRIMARY_SOURCES
 from jobscout.store import COLLECTION_NAME, WeaviateStore, _props_to_job
 
 # ---------------------------------------------------------------------------
@@ -31,10 +32,18 @@ DATE_PRESETS: dict[str, dt.timedelta] = {
     "1m": dt.timedelta(days=30),
 }
 
-# Default freshness ladder for progressive lookback: widen from 6h up to 24h
-# until enough results are found. Mirrors the "start at 6h, expand to 24h max"
-# rule of a fresh-roles search agent.
+# Default freshness ladder for generic browsing: keep the feed tightly focused
+# on newly posted roles.
 PROGRESSIVE_LADDER: list[str] = ["6h", "12h", "18h", "24h"]
+
+# Personalized recommendations optimize for qualified matches before recency.
+# A sparse day must not produce an empty feed when a still-active, profile-fit
+# role exists in the index. The API stops as soon as it has enough qualified
+# matches, so fresh roles still win without allowing unrelated filler.
+# Three rungs, not five: entry-level supply is scarce, so the 6h/14d rungs
+# almost never fill the target and each rung re-scores a full candidate window
+# (~20s apiece against the live profile).
+RECOMMENDATION_LADDER: list[str] = ["24h", "7d", "1m"]
 
 
 # ---------------------------------------------------------------------------
@@ -55,12 +64,17 @@ def build_filters(
     exclude_citizenship_required: bool = False,
     exclude_recruiter: bool = False,
     exclude_no_sponsorship: bool = False,
+    exclude_ghost: bool = False,
+    true_entry_only: bool = False,
+    new_grad_only: bool = False,
     h1b_sponsor: bool = False,
     everify: bool = False,
+    direct_sources_only: bool = False,
     date_range: str | None = None,
     date_from: dt.date | None = None,
     date_to: dt.date | None = None,
     ingested_after: dt.datetime | None = None,
+    include_active: bool = False,
 ) -> Any | None:
     """Compose Weaviate ``Filter`` objects from search parameters.
 
@@ -100,6 +114,14 @@ def build_filters(
         """Match a property against ANY of the given values (multi-select OR)."""
         return _or([Filter.by_property(prop).equal(v) for v in (values or []) if v])
 
+    if include_active:
+        # Only a completed direct-ATS snapshot explicitly writes ``False``. The
+        # existing collection contains legacy NULLs, but Weaviate's ``is_none``
+        # filter does not reliably include them when combined with an OR. A
+        # negative check is both simpler and preserves every record except one
+        # proven closed by lifecycle tracking.
+        clauses.append(Filter.by_property("is_active").not_equal(False))
+
     # Categorical multi-select filters: OR within each, AND across them.
     for prop, vals in (
         ("remote_mode", remote),
@@ -120,11 +142,63 @@ def build_filters(
         clauses.append(Filter.by_property("citizenship_required").equal(False))
     if exclude_recruiter:
         clauses.append(Filter.by_property("is_recruiter_post").equal(False))
+    # Use the same source classification that deduplication and the API expose.
+    # This is more dependable than a recruiter heuristic when the candidate only
+    # wants a primary application URL.
+    if direct_sources_only:
+        direct = _any_equal(
+            "source", sorted(PRIMARY_SOURCES | GOVERNMENT_SOURCES | CURATED_SOURCES)
+        )
+        if direct is not None:
+            clauses.append(direct)
     # "Hide no-sponsorship": drop explicit refusals AND citizenship-required roles,
     # but KEEP the ~96% that say nothing (visa_sponsorship == "not_mentioned").
     if exclude_no_sponsorship:
-        clauses.append(Filter.by_property("visa_sponsorship").not_equal("no"))
+        # "no" is a Weaviate stopword, so .not_equal("no") errors with
+        # "only stopwords provided". Express the same intent positively over the
+        # non-refusal enum values (keep yes/unclear/not_mentioned, drop "no").
+        keep_visa = _or([
+            Filter.by_property("visa_sponsorship").equal(v)
+            for v in ("yes", "unclear", "not_mentioned")
+        ])
+        if keep_visa is not None:
+            clauses.append(keep_visa)
         clauses.append(Filter.by_property("citizenship_required").equal(False))
+    # "Hide likely-stale" (ghost jobs): drop postings older than GHOST_STALE_DAYS that
+    # are still listed. Uses the stored posted_date so it paginates correctly. The
+    # nuanced per-job badge (ghost_risk) additionally folds in recruiter/estimated-date.
+    if exclude_ghost:
+        cutoff = dt.datetime.now(dt.UTC) - dt.timedelta(days=GHOST_STALE_DAYS)
+        clauses.append(Filter.by_property("posted_date").greater_or_equal(cutoff))
+    # "True entry-level": restrict to high-confidence entry roles. yoe_max is almost
+    # always unenriched, so key off yoe_min (≤2 = entry), plus junior/intern when YoE is
+    # unknown, plus explicit new-grad programs. Excludes senior roles and the loose
+    # "unclear"-seniority bucket that the Experience→Entry band lets through.
+    if true_entry_only:
+        yoe = Filter.by_property("yoe_min")
+        sen = Filter.by_property("seniority")
+        # Exclude explicitly senior-and-up roles even when they list a low yoe_min
+        # (e.g. a "Staff ML Engineer" asking for "2+ years" is not entry-level).
+        not_senior = (
+            sen.not_equal("senior") & sen.not_equal("staff") & sen.not_equal("principal")
+            & sen.not_equal("lead") & sen.not_equal("manager") & sen.not_equal("director")
+            & sen.not_equal("vp") & sen.not_equal("c_level")
+        )
+        entry_yoe = _or([
+            yoe.less_or_equal(2),
+            yoe.is_none(True) & (sen.equal("intern") | sen.equal("junior")),
+        ])
+        # New-grad programs are entry-level by definition → always kept; otherwise an
+        # entry YoE signal AND not a senior-leveled title.
+        keep = _or([
+            Filter.by_property("new_grad_program").equal(True),
+            (entry_yoe & not_senior) if entry_yoe is not None else None,
+        ])
+        if keep is not None:
+            clauses.append(keep)
+    # "New-grad programs only": explicit new-grad/university/early-career/rotational roles.
+    if new_grad_only:
+        clauses.append(Filter.by_property("new_grad_program").equal(True))
     # Positive sponsorship signals are OR'd together (additive), then AND'd with the
     # rest. cap-exempt (university/nonprofit), proven H-1B filer, and E-Verify
     # employer rarely overlap, so AND-ing them would empty the list — a user enabling
@@ -242,27 +316,6 @@ def _fetch_facets(
 
 
 # ---------------------------------------------------------------------------
-# Sort helper
-# ---------------------------------------------------------------------------
-
-def _build_sort(sort: str) -> Any | None:
-    """Translate sort enum to a Weaviate Sort spec.
-
-    - ``posted_desc``  → sort by ``posted_date`` descending
-    - ``salary_desc``  → sort by ``salary_max`` descending
-    - ``relevance``    → let Weaviate rank by hybrid score (no explicit sort)
-
-    Weaviate v4 fetch_objects expects a single Sort object, not a list.
-    """
-    if sort == "posted_desc":
-        return Sort.by_property("posted_date", ascending=False)
-    if sort == "salary_desc":
-        return Sort.by_property("salary_max", ascending=False)
-    # "relevance" or any unrecognised value → default hybrid scoring
-    return None
-
-
-# ---------------------------------------------------------------------------
 # Main search executor
 # ---------------------------------------------------------------------------
 
@@ -274,6 +327,7 @@ def execute_search(
     sort: str,
     page: int,
     page_size: int,
+    include_facets: bool = True,
 ) -> JobsResponse:
     """Execute a Weaviate query and return a paginated :class:`~jobscout.models.JobsResponse`.
 
@@ -299,42 +353,60 @@ def execute_search(
     """
     collection = store._client.collections.get(COLLECTION_NAME)
     offset = (page - 1) * page_size
-    sort_spec = _build_sort(sort)
 
     if q and q.strip():
-        # Hybrid: BM25 + pre-computed vector
+        # Hybrid: BM25 + pre-computed vector. Weaviate hybrid paging is
+        # score-ranked; fetch offset+page_size and slice (native offset= is
+        # unreliable under range filters — see the no-q branch).
         vector = embed_query(q.strip())
 
-        kwargs: dict[str, Any] = dict(
+        response = collection.query.hybrid(
             query=q.strip(),
             alpha=alpha,
             vector=vector,
             filters=filters,
-            limit=page_size,
-            offset=offset,
+            limit=min(offset + page_size, 10_000),
             return_metadata=MetadataQuery(score=True, distance=True),
         )
-        # Weaviate hybrid does not support explicit Sort alongside score
-        # ranking; only apply sort when the caller explicitly requests
-        # non-relevance ordering.
-        if sort_spec is not None and sort != "relevance":
-            kwargs["sort"] = sort_spec
-
-        response = collection.query.hybrid(**kwargs)
+        page_objects = list(response.objects)[offset:]
     else:
-        # Keyword-free: plain fetch with metadata filters and optional sort
-        fetch_kwargs: dict[str, Any] = dict(
+        # ponytail: Weaviate sort/offset is BROKEN under a range filter (e.g.
+        # posted_date): pages overlap ~95% and results aren't even prefix-stable
+        # across limits (verified on 1.27.0 and 1.27.27). So for keyword-free
+        # browsing we fetch ALL matching rows as light (job_id + sort-key)
+        # records, sort + paginate in Python, then hydrate just the page.
+        # ~2-3k rows of 3 fields is cheap; revisit if the corpus nears 10k.
+        light = collection.query.fetch_objects(
             filters=filters,
-            limit=page_size,
-            offset=offset,
+            limit=10_000,
+            return_properties=["job_id", "posted_date", "salary_max"],
         )
-        if sort_spec is not None:
-            fetch_kwargs["sort"] = sort_spec
+        _far_past = dt.datetime(1970, 1, 1, tzinfo=dt.UTC)
 
-        response = collection.query.fetch_objects(**fetch_kwargs)
+        def _key(o: Any) -> Any:
+            p = o.properties
+            if sort == "salary_desc":
+                return (-(p.get("salary_max") or 0), p.get("job_id") or "")
+            # posted_desc (and the no-query "relevance" fallback): newest first,
+            # job_id tiebreak so pagination is deterministic.
+            posted = p.get("posted_date") or _far_past
+            return (-posted.timestamp(), p.get("job_id") or "")
+
+        ordered = sorted(light.objects, key=_key)
+        page_ids = [
+            o.properties["job_id"] for o in ordered[offset : offset + page_size]
+        ]
+        by_id: dict[str, Any] = {}
+        if page_ids:
+            hydrated = collection.query.fetch_objects(
+                filters=Filter.by_property("job_id").contains_any(page_ids),
+                limit=len(page_ids),
+            )
+            by_id = {o.properties.get("job_id"): o for o in hydrated.objects}
+        page_objects = [by_id[jid] for jid in page_ids if jid in by_id]
 
     jobs: list[Job] = []
-    for obj in response.objects:
+    for obj in page_objects:
         props = dict(obj.properties)
         job_id = props.get("job_id", "")
         jobs.append(_props_to_job(props, job_id=job_id))
@@ -350,7 +422,9 @@ def execute_search(
     except Exception:
         total = len(jobs)  # fallback: at least the current page count
 
-    facets = _fetch_facets(store, filters)
+    # 8 aggregate round-trips — skip for intermediate/candidate fetches (the
+    # recommendation pipeline pulls candidate windows where facets are unused).
+    facets = _fetch_facets(store, filters) if include_facets else {}
 
     return JobsResponse(
         total=total,

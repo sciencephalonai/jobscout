@@ -1,5 +1,6 @@
 """Boot-resilience tests for WeaviateStore.__init__ — a transient/slow Weaviate
-must not kill startup; only a persistent failure raises the friendly error."""
+must not kill startup; a cloud-primary failure degrades to local; only a local
+failure raises the friendly error."""
 
 from __future__ import annotations
 
@@ -8,19 +9,28 @@ import pytest
 import jobscout.store as store
 
 
-@pytest.fixture(autouse=True)
-def _cloud_creds_and_no_sleep(monkeypatch):
-    # Force the cloud branch deterministically + don't actually sleep between retries.
-    monkeypatch.setattr(store.settings, "weaviate_cluster_url", "test.weaviate.cloud")
-    monkeypatch.setattr(store.settings, "weaviate_api_key", "k")
-    monkeypatch.setattr(store.time, "sleep", lambda *_a, **_k: None)
-    # Isolate the connect retry from schema bootstrap.
-    monkeypatch.setattr(store.WeaviateStore, "_ensure_collection", lambda self: None)
+class _DummyCollections:
+    def exists(self, *_a, **_k) -> bool:
+        return True
 
 
 class _DummyClient:
+    def __init__(self) -> None:
+        self.collections = _DummyCollections()
+
     def close(self) -> None:
         pass
+
+
+@pytest.fixture(autouse=True)
+def _cloud_creds_and_no_sleep(monkeypatch):
+    # Cloud creds present + cloud-primary by default; don't sleep between retries.
+    monkeypatch.setattr(store.settings, "weaviate_cluster_url", "test.weaviate.cloud")
+    monkeypatch.setattr(store.settings, "weaviate_api_key", "k")
+    monkeypatch.setattr(store.settings, "storage_mode", "cloud")
+    monkeypatch.setattr(store.time, "sleep", lambda *_a, **_k: None)
+    # Isolate connect retry from schema bootstrap.
+    monkeypatch.setattr(store.WeaviateStore, "_ensure_collection", lambda self, client: None)
 
 
 def test_retries_then_succeeds(monkeypatch):
@@ -36,13 +46,29 @@ def test_retries_then_succeeds(monkeypatch):
     s = store.WeaviateStore()
     assert calls["n"] == 3                 # failed twice, succeeded on the 3rd
     assert isinstance(s._client, _DummyClient)
+    assert s.primary_target == "cloud"
 
 
-def test_persistent_failure_raises_friendly_error(monkeypatch):
+def test_persistent_cloud_failure_degrades_to_local(monkeypatch):
+    # New behavior: a dead cloud primary degrades to local instead of being fatal.
+    local_client = _DummyClient()
+    monkeypatch.setattr(
+        store.weaviate, "connect_to_weaviate_cloud",
+        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("cloud down")),
+    )
+    monkeypatch.setattr(store.weaviate, "connect_to_local", lambda *a, **k: local_client)
+    s = store.WeaviateStore()
+    assert s.primary_target == "local"
+    assert s._client is local_client
+
+
+def test_local_failure_raises_friendly_error(monkeypatch):
+    monkeypatch.setattr(store.settings, "storage_mode", "local")  # local primary
+
     def always_fail(*a, **k):
-        raise RuntimeError("WeaviateGRPCUnavailableError: down")
+        raise RuntimeError("down")
 
-    monkeypatch.setattr(store.weaviate, "connect_to_weaviate_cloud", always_fail)
+    monkeypatch.setattr(store.weaviate, "connect_to_local", always_fail)
     with pytest.raises(RuntimeError, match="Could not connect to Weaviate"):
         store.WeaviateStore()
 

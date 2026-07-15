@@ -12,6 +12,8 @@ a module-level lazy singleton, mirroring ``jobscout.enrich``.
 
 from __future__ import annotations
 
+from functools import lru_cache
+
 from google import genai
 from google.genai import types
 
@@ -171,8 +173,19 @@ def embed_job(
     return embed_text(_build_embed_text(title, company, skills, description))
 
 
+@lru_cache(maxsize=512)
+def _embed_query_cached(text: str) -> tuple[float, ...]:
+    """Memoized remote embedding for query strings (deterministic per text).
+
+    The recommendation pipeline embeds the SAME profile-derived query string on
+    every request (and the UI polls) — without this cache that's a remote
+    Gemini call each time. Tuple-typed so cached values are immutable.
+    """
+    return tuple(_embed(text, _TASK_QUERY))
+
+
 def embed_query(text: str) -> list[float]:
-    """Embed a user search query string.
+    """Embed a user search query string (cached per query text).
 
     Uses ``task_type="RETRIEVAL_QUERY"`` so the model optimises the vector for
     querying against document-task vectors.
@@ -183,4 +196,4 @@ def embed_query(text: str) -> list[float]:
     Returns:
         Dense float vector.
     """
-    return _embed(text, _TASK_QUERY)
+    return list(_embed_query_cached(text))
