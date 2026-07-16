@@ -12,6 +12,11 @@ matches.
 Full docs: **[`docs/`](docs/)** — start with [docs/user-guide.md](docs/user-guide.md) and
 [docs/architecture.md](docs/architecture.md).
 
+**Project direction & contributing:** the vision is in [`JobScout_SPEC.md`](JobScout_SPEC.md), the living
+plan in [`docs/ROADMAP-CURRENT.md`](docs/ROADMAP-CURRENT.md), the hosting path in
+[`docs/pre-deployment-checklist.md`](docs/pre-deployment-checklist.md), and dev standards in
+[`CONTRIBUTING.md`](CONTRIBUTING.md).
+
 ---
 
 ## What it does (at a glance)
@@ -64,7 +69,8 @@ cd frontend && npm install && npm run dev            # http://localhost:5173
 
 ### Required keys (`.env`)
 - `GOOGLE_API_KEY` — Gemini embeddings (`gemini-embedding-001`). Needed for ingest + text search.
-- `DEEPSEEK_API_KEY` — job/resume enrichment (`deepseek-chat`).
+- `DEEPSEEK_API_KEY` — job/resume enrichment when `LLM_PROVIDER=deepseek` (default).
+- `NVIDIA_API_KEY` — optional NVIDIA NIM alternative. Set `LLM_PROVIDER=nvidia` and choose the model in Data & backend settings (or set `NVIDIA_MODEL` in `.env`).
 - `WEAVIATE_CLUSTER_URL` + `WEAVIATE_API_KEY` — Weaviate Cloud (or use local Docker).
 - `ADZUNA_APP_ID` / `ADZUNA_APP_KEY` — optional, enables the Adzuna source.
 
@@ -74,23 +80,24 @@ Details: [docs/configuration.md](docs/configuration.md).
 
 The index starts **empty** — open the UI and click **Get latest jobs** (top bar) to ingest from the
 curated boards, including the cap-exempt Workday universities + nonprofit boards. Give it a minute (each
-new job is enriched + embedded). Cap-exempt employers are auto-synced into the **Companies** tab at
-startup. To also populate the broader *for-profit* company watchlist (optional), run
-`python scripts/discover_companies.py --write-sources` then `python scripts/build_company_registry.py`.
+new job is enriched + embedded). Every configured public ATS board and every curated target in
+`data/company_targets.yaml` is idempotently synced into the **Companies** tab at startup. Targets without
+a supported public ATS remain safe direct-apply links and are never scraped.
 
 ---
 
 ## The UI, tab by tab
 
-The UI is **5 tabs** with one consistent top bar on every page.
+The UI has one consistent workspace shell across its main pages.
 
 | Tab | What it's for | How to use it |
 |---|---|---|
-| **Jobs** | The main search + filter view (two-pane: list + detail). | Type a query, apply filters (date, remote, source, experience, **Work authorization** [hide-no-sponsorship / cap-exempt / H-1B / **E-Verify**], **employer type**, **clearance**, company size). Pick an **active profile** (top bar) to get fit verdicts, matched/gap chips, cap-exempt-first sorting, and **Apply / Save / Hide** buttons on each job. Badges include sponsorship likelihood and **E-Verify**. |
+| **For You** | Strict profile-backed recommendations. | Requires an active profile and returns only roles that pass target-profession, experience, seniority, resume/skill evidence, location, authorization, specialty, and work-mode gates. It widens recency without unrelated filler and automatically runs a cooldown- and quota-bounded profile refill when results are sparse/stale. |
+| **Discover** | The broad search + filter view (two-pane: list + detail). | Type a query and apply date, remote, source, experience, work-authorization, employer-type, clearance, and company-size filters. With a profile, verdict/fit quality ranks before optional cap-exempt preference. |
 | **My Jobs** | Your shortlist + application tracker (one page, toggle). | **Shortlist** = jobs you **Saved**; **Pipeline** = jobs you marked **Applied / OA / Interview / Offer / Rejected** (with notes; applied jobs drop out of the main Jobs list). Replaces a manual `applied_jobs.md`. |
 | **Saved** | Saved searches + "new since last visit" alerts. | Save the current query+filters (★ on the Jobs tab); this tab lists each saved search with a live **new-matches** count. The **🔔 bell** in the top bar badges when there are new matches. |
-| **Companies** | The company registry (employers, ATS, tier, H-1B / **cap-exempt** flags). | Filter by tier / H-1B / scrapable. **Get companies** (top bar) / **Refresh watchlist** pulls *new* jobs from enabled companies — now including the **cap-exempt** universities/nonprofits auto-synced into the registry (violet *Cap-exempt* badge). Direct-apply-only firms show a careers link. |
-| **Profile** | Drop your resume + manage profiles (one page). | Drag a PDF/DOCX/TXT/JSON → extracts text, builds a saved profile, lists matches with matched (green) / gap (amber) chips. Below: every saved profile with **Set active** / **Delete**. |
+| **Companies** | The company registry (employers, ATS, tier, H-1B / **cap-exempt** flags). | Filter by tier / H-1B / scrapable. **Get companies** (top bar) / **Refresh watchlist** pulls *new* jobs only from verified public ATS boards. Bespoke/Oracle/company-hosted targets stay visible as direct careers links without being scraped. |
+| **Profile** | Drop your resume + manage a resume library + profiles (one page). | Drag a PDF/DOCX/TXT/JSON → extracts text, builds a saved profile, lists matches with matched (green) / gap (amber) chips. **Resumes** card: keep several resumes, pick one active for matching, rename/download/delete. **Tailored resumes** card: re-download any built DOCX. Below: every saved profile with **Set active** / **Delete**. |
 
 **Top bar (every tab):** active-profile selector, **Get latest jobs** (runs ingestion on demand),
 **Get companies** (refreshes the company watchlist), the **🔔** saved-search bell, and **Settings**
@@ -104,9 +111,22 @@ Full walkthrough with a sequence diagram: [docs/user-guide.md](docs/user-guide.m
 
 ---
 
+**How fetching works:** all enabled sources are fetched **in parallel** (one worker + one compliant
+HTTP client per source; per-domain rate limits and robots.txt still respected — `INGEST_FETCH_WORKERS`,
+default 6), while enrichment/embedding/writes stay on a single stream. The **For You** feed keeps
+widening its freshness window (24h → 7d → 1m) until it has ~25 qualified recommendations (display cap
+50), and you can pin an exact window with the *Date posted* pill.
+
 ## Keeping jobs fresh
 
-- **Manual (default):** click **Get latest jobs** (top bar) or **Refresh watchlist** (Companies).
+- **First run:** an empty index self-fills once via a bounded background seed (keyless sources) so the
+  app isn't empty on first open — never a committed snapshot. `RETENTION_DAYS` keeps a rolling recent
+  window. See [docs/data-and-storage.md](docs/data-and-storage.md).
+- **For You:** a sparse/stale qualified feed automatically starts a profile-targeted refill at most once
+  per six hours for the same profile evidence; the UI polls until new matches land. A "new since last
+  visit" pill surfaces roles indexed since you last opened the feed.
+- **Manual:** click **Find profile matches / Get latest jobs** or **Refresh watchlist** for an
+  immediate run (the primary button's label + helper text explain which you're getting).
 - **Daily auto-refresh:** built but **OFF by default** (Settings → toggle). On the free Gemini tier
   (1,000 embeds/day) a daily crawl can exhaust quota, so the manual button is the safe default. Turn
   the scheduler on once you have a paid embedding tier. See [docs/configuration.md](docs/configuration.md).
@@ -124,6 +144,20 @@ Full walkthrough with a sequence diagram: [docs/user-guide.md](docs/user-guide.m
   No personal contact info is scraped or stored. Delete a profile anytime (Profiles or Match tab).
 
 Exact tables + retention: [docs/data-and-storage.md](docs/data-and-storage.md).
+
+## Hosting it for more than yourself
+
+JobScout runs today as a single local user, but the core is shaped for multi-user hosting **without a
+rewrite**: the database (DuckDB→Postgres), file storage (local→S3), authentication, and authorization are
+each behind a single swap seam, and per-account limits/quotas resolve through one entitlements function.
+
+- **Operator console** — the host monitors accounts and grants/revokes premium via `/api/admin/*` and the
+  **Admin** tab (visible to `is_admin`). Per-account LLM/tailor/deep-match usage, storage, and traffic
+  populate once `usage_metering_enabled` is on. See [docs/multi-tenancy.md](docs/multi-tenancy.md).
+- **Guard rails** (rate limiting, upload/body-size caps, security headers, per-account quotas, auth
+  enforcement) are **implemented but off by default** — flip them before exposing the app to untrusted
+  users. The single source of truth is **[docs/pre-deployment-checklist.md](docs/pre-deployment-checklist.md)**
+  (part A: flags to flip; part B: Postgres/S3/auth/queue/billing/compliance to build).
 
 ### Back up your jobs (Weaviate)
 

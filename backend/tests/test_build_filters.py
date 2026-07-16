@@ -23,6 +23,14 @@ def test_empty_lists_behave_like_none() -> None:
     )
 
 
+def test_include_active_excludes_only_explicitly_closed_records() -> None:
+    # The exact Weaviate filter tree is opaque, but lifecycle search must still
+    # construct a filter when active-role visibility is requested. The implementation
+    # deliberately uses ``not_equal(False)`` so legacy NULL lifecycle values remain
+    # visible instead of being treated as closed.
+    assert build_filters(include_active=True) is not None
+
+
 def test_single_source_filter() -> None:
     assert build_filters(source=["adzuna"]) is not None
 

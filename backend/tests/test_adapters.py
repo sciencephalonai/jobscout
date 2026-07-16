@@ -144,3 +144,13 @@ def test_remoteok_skips_legal_first_element():
     # The legal/metadata first element must not be yielded as a job.
     assert all("legal" not in j for j in jobs)
     assert jobs and jobs[0]["title"] == "Backend Engineer"
+
+
+def test_greenhouse_uses_configured_employer_display_name():
+    payload = CASES["greenhouse"][1]
+    jobs = list(
+        GreenhouseAdapter(companies=[{"token": "example-board", "company": "Example Research Lab"}]).search(
+            keywords=[], location=None, results_wanted=5, since=None, http=FakeHttp(payload)
+        )
+    )
+    assert jobs[0]["company"] == "Example Research Lab"

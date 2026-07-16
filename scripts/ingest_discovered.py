@@ -110,7 +110,9 @@ def main() -> int:
                     skipped += 1
                     continue
                 job = raw_to_job(raw, source=name)
-                if not is_us_job(job.country, job.location_raw, job.remote_mode):
+                if not is_us_job(
+                    job.country, job.location_raw, job.remote_mode, title=job.title,
+                ):
                     dropped += 1
                     continue
                 try:

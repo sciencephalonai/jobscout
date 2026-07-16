@@ -44,7 +44,7 @@ def _load_tiers() -> dict[str, dict]:
     """slug -> {name, tier, reachable_ats} from the cleaned tier map."""
     out: dict[str, dict] = {}
     with TIERS.open() as f:
-        for row in csv.DictReader((ln for ln in f if not ln.startswith("#"))):
+        for row in csv.DictReader(ln for ln in f if not ln.startswith("#")):
             if row.get("slug"):
                 out[row["slug"]] = row
     return out

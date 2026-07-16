@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
+import { MagnifyingGlass, X } from '@phosphor-icons/react'
 import type { JobFilters } from '../types'
 import { useActiveProfile } from '../ProfileContext'
 
@@ -52,30 +53,20 @@ export default function SearchBar({ filters, onFilterChange }: SearchBarProps) {
   )
 
   return (
-    <form onSubmit={handleSearchSubmit} className="flex items-center gap-3">
+    <form onSubmit={handleSearchSubmit} className="grid grid-cols-[minmax(0,1fr)_8.5rem] items-center gap-1.5 sm:grid-cols-[minmax(0,1fr)_9.5rem]">
       {/* Search input */}
       <div className="relative flex-1">
         <div className="absolute inset-y-0 left-3 flex items-center pointer-events-none">
-          <svg
-            className="w-4 h-4 text-slate-400"
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
-            />
-          </svg>
+          <MagnifyingGlass size={15} className="text-slate-400" />
         </div>
+        <label htmlFor="job-search" className="sr-only">Search job titles, skills, or companies</label>
         <input
+          id="job-search"
           type="text"
           value={inputValue}
           onChange={(e) => handleSearchChange(e.target.value)}
           placeholder="Search job titles, skills, companies…"
-          className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition"
+          className="control-focus h-8 w-full rounded-lg border border-slate-200 bg-[#f7f8f6] py-1 pl-8 pr-8 text-xs text-ink placeholder-slate-400 outline-none focus:border-signal-300 focus:bg-white"
         />
         {inputValue && (
           <button
@@ -84,20 +75,20 @@ export default function SearchBar({ filters, onFilterChange }: SearchBarProps) {
               setInputValue('')
               onFilterChange({ q: '' })
             }}
-            className="absolute inset-y-0 right-3 flex items-center text-slate-400 hover:text-slate-600"
+            className="control-focus absolute inset-y-0 right-2 flex items-center rounded-md px-1 text-slate-400 hover:text-ink"
+            aria-label="Clear search"
           >
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-            </svg>
+            <X size={14} />
           </button>
         )}
       </div>
 
       {/* Sort dropdown */}
       <select
+        aria-label="Sort jobs"
         value={filters.sort ?? 'relevance'}
         onChange={handleSortChange}
-        className="px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent cursor-pointer"
+        className="control-focus h-8 min-w-0 cursor-pointer rounded-lg border border-slate-200 bg-[#f7f8f6] px-2 text-[0.7rem] font-medium text-slate-700 outline-none focus:border-signal-300 focus:bg-white"
       >
         {SORT_OPTIONS.map((opt) => (
           <option key={opt.value} value={opt.value}>
@@ -106,7 +97,7 @@ export default function SearchBar({ filters, onFilterChange }: SearchBarProps) {
         ))}
       </select>
       {filters.sort === 'match' && !activeProfileId && (
-        <span className="self-center text-xs text-amber-600">
+        <span className="col-span-2 text-[0.68rem] text-amber-700">
           Pick a profile (top bar) to rank by match
         </span>
       )}

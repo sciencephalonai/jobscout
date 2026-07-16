@@ -33,8 +33,8 @@ import csv
 import re
 import sys
 import time
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "backend"))

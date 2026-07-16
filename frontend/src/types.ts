@@ -15,6 +15,9 @@ export interface Job {
   posted_date: string | null // ISO datetime string
   posted_date_est: boolean
   ingested_at: string
+  is_active?: boolean
+  last_seen_at?: string | null
+  closed_at?: string | null
   yoe_min: number | null
   yoe_max: number | null
   visa_sponsorship: 'yes' | 'no' | 'unclear' | 'not_mentioned'
@@ -28,12 +31,21 @@ export interface Job {
   employer_type?: 'university' | 'hospital' | 'nonprofit' | 'government' | 'for_profit' | 'unclear'
   cap_exempt?: 'yes' | 'likely' | 'no' | 'unknown'
   citizenship_required?: boolean
+  eligibility_evidence?: string[]
   known_h1b_sponsor?: boolean
   known_everify?: boolean
   sponsorship_likelihood?: 'likely' | 'unknown' | 'no'
   duplicate_count?: number
   also_on?: string[]
   is_recruiter_post?: boolean
+  source_kind?: 'primary' | 'government' | 'curated' | 'aggregator' | 'scraper'
+  source_label?: string
+  freshness_kind?: 'posted' | 'updated' | 'estimated'
+  // ── Early-career signals (computed by the backend) ──
+  ghost_risk?: 'low' | 'medium' | 'high'
+  posting_age_days?: number | null
+  mislabeled_entry?: boolean
+  new_grad_program?: boolean
 }
 
 export interface JobsResponse {
@@ -49,6 +61,8 @@ export interface JobsResponse {
     category?: Record<string, number>
   }
   verdicts?: Record<string, Verdict>  // present when a profile_id is supplied
+  lookback_window?: string | null     // progressive freshness window actually used
+  recommendation_refreshing?: boolean // profile-targeted ingestion is running
 }
 
 // Full saved profile (GET /api/profiles). Superset of ResumeProfile.
@@ -56,10 +70,123 @@ export interface Profile {
   id: string
   label: string
   skills: string[]
+  interests: string[]
   target_titles: string[]
   yoe_max: number
   seniority_max: string
   needs_sponsorship: boolean
+  reject_clearance: boolean
+  reject_citizenship_only: boolean
+  remote_preference: 'remote' | 'hybrid' | 'onsite' | 'any'
+  countries: string[]
+  prefer_cap_exempt: boolean
+  excluded_companies: string[]
+  // Deep-match steering: rendered into the deep-match LLM prompt (empty = no rules).
+  avoid_role_types: string[]
+  avoid_domains: string[]
+  // The complete extracted resume is saved locally and is the canonical source
+  // for semantic and deep matching. The original PDF/DOCX is retained separately.
+  resume_text: string | null
+  // Every detected heading, including custom sections, is retained in source
+  // order. The complete resume_text remains the lossless canonical record.
+  resume_sections: ResumeSection[]
+  structured_resume: StructuredResume | null
+  resume_filename: string | null
+  resume_content_type: string | null
+  resume_uploaded_at: string | null
+  active_resume_id?: string | null
+  // True when a raw-text edit left the typed structured cards behind (matching is
+  // unaffected — it uses the current resume_text). Drives the Rebuild-button dot.
+  structured_stale?: boolean
+}
+
+export interface ResumeSection {
+  heading: string
+  content: string
+}
+
+// ── Structured resume (JSON-Resume-aligned typed sections) ──
+export interface EducationEntry {
+  institution: string
+  degree?: string | null
+  field_of_study?: string | null
+  gpa?: string | null
+  start_date?: string | null
+  end_date?: string | null
+  location?: string | null
+  honors: string[]
+}
+
+export interface ExperienceEntry {
+  company: string
+  title: string
+  location?: string | null
+  start_date?: string | null
+  end_date?: string | null
+  current: boolean
+  summary?: string | null
+  bullets: string[]
+}
+
+export interface ProjectEntry {
+  name: string
+  technologies: string[]
+  url?: string | null
+  github_url?: string | null
+  start_date?: string | null
+  end_date?: string | null
+  bullets: string[]
+}
+
+export interface CertificationEntry {
+  name: string
+  issuer?: string | null
+  date?: string | null
+  credential_id?: string | null
+  url?: string | null
+}
+
+export interface PublicationEntry {
+  title: string
+  venue?: string | null
+  date?: string | null
+  url?: string | null
+  authors: string[]
+  description?: string | null
+}
+
+export interface AchievementEntry {
+  title: string
+  issuer?: string | null
+  date?: string | null
+  description?: string | null
+}
+
+export interface SkillCategory {
+  name: string
+  skills: string[]
+}
+
+export interface CustomSection {
+  title: string
+  bullets: string[]
+}
+
+export interface StructuredResume {
+  summary?: string | null
+  education: EducationEntry[]
+  experience: ExperienceEntry[]
+  projects: ProjectEntry[]
+  certifications: CertificationEntry[]
+  publications: PublicationEntry[]
+  achievements: AchievementEntry[]
+  skill_categories: SkillCategory[]
+  custom_sections: CustomSection[]
+}
+
+export interface PolishPair {
+  original: string
+  suggested: string
 }
 
 export type JobState =
@@ -100,6 +227,7 @@ export interface Verdict {
   job_id: string
   verdict: 'apply' | 'flag' | 'reject'
   score: number
+  recommendable: boolean
   reasons: string[]
   red_flags: string[]
   matched: string[]
@@ -118,9 +246,49 @@ export interface ResumeProfile {
 }
 
 export interface MatchResponse {
-  profile: ResumeProfile
+  profile: Profile
   jobs: Job[]
   verdicts: Record<string, Verdict>
+}
+
+// LLM "second opinion" for one job vs. the active profile (POST /api/match/deep/{job_id}).
+export interface DeepMatch {
+  verdict: 'apply' | 'borderline' | 'skip'
+  score: number
+  strengths: string[]
+  gaps: string[]
+  summary: string
+  cached: boolean
+}
+
+export interface TailorGate {
+  recommendation: 'build' | 'skip'
+  rule_verdict: 'apply' | 'flag' | 'reject'
+  rule_red_flags: string[]
+  deep_verdict?: 'apply' | 'borderline' | 'skip'
+  deep_score?: number
+  deep_gaps?: string[]
+  deep_summary?: string
+}
+
+export interface TailoredResumeResponse {
+  built: boolean
+  gate: TailorGate
+  // Present only when built:
+  filename?: string
+  notes?: string[]
+  warnings?: string[]
+  provider?: 'deepseek' | 'nvidia'
+  model?: string
+  download_url?: string
+}
+
+// Backend wiring shown in the Settings panel (GET/PUT /api/settings).
+export interface SettingsResponse {
+  storage_mode: 'both' | 'cloud' | 'local'
+  backend: { primary: string; mirror: string | null; dual_write: boolean }
+  keys_present: { google: boolean; deepseek: boolean; nvidia: boolean; weaviate_cloud: boolean }
+  llm: { provider: 'deepseek' | 'nvidia'; model: string; configured: boolean }
 }
 
 export interface JobFilters {
@@ -141,6 +309,14 @@ export interface JobFilters {
   employer_type?: string[]         // university|hospital|nonprofit|government|for_profit
   security_clearance?: string[]    // required|preferred|none|unclear
   exclude_recruiter?: boolean      // hide staffing-agency / aggregator reposts
+  // ── Early-career toggles ──
+  exclude_ghost?: boolean          // hide likely-stale 'ghost' postings (old + still listed)
+  true_entry_only?: boolean        // restrict to high-confidence entry roles (yoe_min<=2 / junior / new-grad)
+  new_grad_only?: boolean          // only explicit new-grad / early-career / rotational programs
+  direct_sources_only?: boolean    // official employer ATS / government boards only
+  recommendation_only?: boolean    // requires profile_id; return only profile-backed recommendations
+  apply_only?: boolean             // requires profile_id; hides Flag / Reject verdicts
+  target_min?: number              // progressively widen freshness until this many matches exist
   profile_id?: string              // attach verdicts + cap-exempt sort + exclusions
   alpha?: number
   sort?: string
@@ -158,7 +334,7 @@ export interface DiscoveryResult {
 
 export interface Company {
   slug: string
-  ats: 'greenhouse' | 'lever' | 'ashby' | 'workday' | 'workable' | 'rippling' | 'none'
+  ats: 'greenhouse' | 'lever' | 'ashby' | 'workday' | 'workable' | 'rippling' | 'recruitee' | 'smartrecruiters' | 'none'
   name: string
   careers_url: string | null
   tier: string
@@ -187,6 +363,9 @@ export interface SourceStatus {
   last_run_status: string | null
   last_ingested: number | null
   last_failed: number | null
+  last_seen?: number | null
+  last_filtered?: number | null
+  last_closed?: number | null
   last_error: string | null
   total_ingested: number | null
 }

@@ -10,9 +10,11 @@ under its tenant host:
     → {"total": N, "jobPostings": [
           {"title", "externalPath", "locationsText", "postedOn", "bulletFields": [reqId]}, ...]}
 
-The listing response carries no description, so (when configured) the adapter
-makes one follow-up GET per posting to the CXS job-detail endpoint
-``/wday/cxs/{tenant}/{site}{externalPath}`` and reads ``jobPostingInfo.jobDescription``.
+The listing response carries no description (and hides multi-location postings
+behind a "2 Locations" placeholder), so (when configured) the adapter makes one
+follow-up GET per posting to the CXS job-detail endpoint
+``/wday/cxs/{tenant}/{site}{externalPath}`` and reads
+``jobPostingInfo.{jobDescription, location, additionalLocations, country}``.
 
 Workday is the dominant ATS for universities, academic medical centers, and large
 nonprofits — the H-1B cap-exempt employer classes. Each curated tenant is tagged
@@ -28,7 +30,7 @@ import re
 from collections.abc import Iterator
 from datetime import datetime
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 
 from jobscout.adapters.base import (
     CompliantHttpClient,
@@ -42,6 +44,10 @@ _PAGE_LIMIT = 20
 _MAX_PAGES = 25  # hard ceiling per tenant to bound request volume
 _POSTED_PREFIX = re.compile(r"^\s*posted\s+", re.IGNORECASE)
 _LOCALE_RE = re.compile(r"^[a-z]{2}[-_][A-Za-z]{2}$")  # e.g. en-US / en_US
+_MULTI_LOCATION_PLACEHOLDER_RE = re.compile(
+    r"^(?:\d+|multiple)\s+locations?$", re.IGNORECASE
+)
+_US_CURATED_EMPLOYER_TYPES = {"university", "hospital", "nonprofit", "government"}
 
 
 def parse_workday_url(url: str) -> dict[str, str] | None:
@@ -73,6 +79,88 @@ def parse_workday_url(url: str) -> dict[str, str] | None:
     return {"tenant": tenant, "region": region, "site": segments[0]}
 
 
+def parse_workday_job_url(url: str) -> dict[str, str] | None:
+    """Parse a public Workday job URL into its CXS connection and job path.
+
+    Both locale-prefixed URLs (``/en-US/site/job/...``) and canonical URLs
+    without a locale (``/site/job/...``) are accepted.  An optional trailing
+    ``/apply`` is removed because it is not part of the CXS detail path.
+    """
+    try:
+        parsed = urlparse(url.strip())
+    except Exception:  # noqa: BLE001
+        return None
+    host = (parsed.hostname or "").lower()
+    parts = host.split(".")
+    if not host.endswith("myworkdayjobs.com") or len(parts) < 4:
+        return None
+    segments = [unquote(s) for s in parsed.path.split("/") if s]
+    if segments and _LOCALE_RE.match(segments[0]):
+        segments = segments[1:]
+    if len(segments) < 3 or segments[1].lower() != "job":
+        return None
+    if segments[-1].lower() == "apply":
+        segments = segments[:-1]
+    if len(segments) < 4:
+        return None
+    return {
+        "tenant": parts[0],
+        "region": parts[1],
+        "site": segments[0],
+        "external_path": "/" + "/".join(segments[1:]),
+    }
+
+
+def workday_location_hint(external_path: str | None) -> str | None:
+    """Return the human-readable location slug embedded in a Workday path.
+
+    This is a conservative fallback for detail-endpoint failures.  Workday job
+    paths normally begin ``/job/<location-slug>/<posting>``.  Turning that slug
+    into text gives the downstream US-only classifier enough evidence to reject
+    ``Vietnam-Ho-Chi-Minh-City`` or ``Hanoi`` instead of trusting a board-level
+    country default.
+    """
+    bits = [unquote(bit) for bit in (external_path or "").split("/") if bit]
+    if len(bits) < 3 or bits[0].lower() != "job":
+        return None
+    hint = re.sub(r"[-_]+", " ", bits[1]).strip()
+    if not hint or _MULTI_LOCATION_PLACEHOLDER_RE.fullmatch(hint):
+        return None
+    return hint
+
+
+def _descriptor(value: Any) -> str | None:
+    """Read a Workday descriptor that may be a string or descriptor object."""
+    if isinstance(value, dict):
+        value = value.get("descriptor") or value.get("name") or value.get("alpha2Code")
+    text = str(value or "").strip()
+    return text or None
+
+
+def parse_workday_detail(data: dict[str, Any] | None) -> tuple[str | None, str | None, str | None]:
+    """Return ``(description, locations, country)`` from a CXS detail payload."""
+    info = (data or {}).get("jobPostingInfo") or {}
+    desc = info.get("jobDescription")
+    raw_locations = [info.get("location")]
+    raw_locations.extend(info.get("additionalLocations") or [])
+    locations: list[str] = []
+    for raw_location in raw_locations:
+        location = _descriptor(raw_location)
+        if location and location not in locations:
+            locations.append(location)
+
+    country = _descriptor(info.get("country"))
+    if not country:
+        requisition_location = info.get("jobRequisitionLocation") or {}
+        country = _descriptor(requisition_location.get("country"))
+
+    return (
+        html.unescape(str(desc)) if desc else None,
+        "; ".join(locations) or None,
+        country,
+    )
+
+
 def _normalize_tenants(tenants: list[Any] | None) -> list[dict[str, str]]:
     """Validate config tenant entries → list of {tenant, region, site, type}."""
     out: list[dict[str, str]] = []
@@ -83,12 +171,22 @@ def _normalize_tenants(tenants: list[Any] | None) -> list[dict[str, str]]:
         site = t.get("site")
         if not tenant or not site:
             continue
+        employer_type = str(t.get("type") or "unclear")
+        # A Workday tenant is a board, not a country. Global employers such as
+        # NVIDIA use one tenant for worldwide openings, so silently defaulting
+        # every tenant to US is incorrect. Keep the historical US fallback only
+        # for the curated US cap-exempt classes; all other boards must prove the
+        # job's country through detail data or the per-job location/path.
+        configured_country = str(t.get("country") or "").strip()
+        default_country = configured_country or (
+            "us" if employer_type in _US_CURATED_EMPLOYER_TYPES else ""
+        )
         out.append(
             {
                 "tenant": str(tenant),
                 "region": str(t.get("region") or "wd1"),
                 "site": str(site),
-                "type": str(t.get("type") or "unclear"),
+                "type": employer_type,
                 # Workday listings don't name the employer, but the tenant IS the
                 # employer — a display name stamps it as the job's company so
                 # cap-exempt university/hospital jobs don't render blank.
@@ -96,7 +194,7 @@ def _normalize_tenants(tenants: list[Any] | None) -> list[dict[str, str]]:
                 # Curated tenants are US institutions; Workday's locationsText is
                 # often a bare campus name ("Ithaca (Main Campus)") with no US
                 # token, which the downstream US filter would otherwise drop.
-                "country": str(t.get("country") or "us"),
+                "country": default_country,
             }
         )
     return out
@@ -243,8 +341,26 @@ class WorkdayAdapter:
             source_job_id = str(bullets[0]) if bullets else None
 
             description: str | None = None
+            detail_location: str | None = None
+            detail_country: str | None = None
             if self.fetch_descriptions:
-                description = self._fetch_description(cxs_base, external_path, http)
+                description, detail_location, detail_country = self._fetch_detail(
+                    cxs_base, external_path, http
+                )
+
+            # The search listing's locationsText hides multi-location postings
+            # behind "2 Locations"; the detail JSON carries the real city names
+            # AND the actual country — prefer both. A global tenant (e.g. a
+            # multinational's single Workday board) posts worldwide roles, so a
+            # non-US detail country must override the tenant-level US stamp.
+            listing_location = (posting.get("locationsText") or "").strip() or None
+            location = detail_location or listing_location
+            if not detail_location and (
+                not location or _MULTI_LOCATION_PLACEHOLDER_RE.fullmatch(location)
+            ):
+                location = workday_location_hint(external_path) or location
+            if detail_country:
+                country = detail_country
 
             return {
                 "title": title,
@@ -253,10 +369,11 @@ class WorkdayAdapter:
                 "company": name or None,
                 "url": apply_url,
                 "description": description,
-                "location": (posting.get("locationsText") or "").strip() or None,
+                "location": location,
                 # Curated US tenant → stamp country so the bare campus-name
-                # locationsText isn't dropped by the downstream US filter.
-                "country": country,
+                # locationsText isn't dropped by the downstream US filter
+                # (overridden above when the detail JSON names the country).
+                "country": country or None,
                 "posted_date": _clean_posted(posting.get("postedOn")),
                 "source_job_id": source_job_id,
                 "employer_type": employer_type,
@@ -266,18 +383,22 @@ class WorkdayAdapter:
             return None
 
     @staticmethod
-    def _fetch_description(
+    def _fetch_detail(
         cxs_base: str, external_path: str, http: CompliantHttpClient
-    ) -> str | None:
-        """GET the CXS job-detail endpoint and return the (unescaped) description HTML."""
+    ) -> tuple[str | None, str | None, str | None]:
+        """GET the CXS job-detail endpoint → (description, location, country).
+
+        ``jobPostingInfo`` carries ``jobDescription`` (HTML), ``location`` +
+        ``additionalLocations`` (real city strings, unlike the search listing's
+        "2 Locations" placeholder), and ``country.descriptor`` (e.g. "Vietnam").
+        All three degrade to None on any failure.
+        """
         detail_url = f"{cxs_base}{external_path}"
         try:
             resp = http.get(detail_url, api_source=True)
             if resp.status_code != 200:
-                return None
-            info = (resp.json() or {}).get("jobPostingInfo") or {}
-            desc = info.get("jobDescription")
-            return html.unescape(desc) if desc else None
+                return None, None, None
+            return parse_workday_detail(resp.json())
         except Exception as exc:  # noqa: BLE001
-            log.debug("Workday description fetch failed for %s: %s", detail_url, exc)
-            return None
+            log.debug("Workday detail fetch failed for %s: %s", detail_url, exc)
+            return None, None, None

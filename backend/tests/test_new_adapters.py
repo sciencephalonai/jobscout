@@ -20,7 +20,7 @@ from jobscout.adapters.rippling import RipplingAdapter
 from jobscout.adapters.rss import RssAdapter
 from jobscout.adapters.smartrecruiters import SmartRecruitersAdapter
 from jobscout.adapters.workable import WorkableAdapter
-from jobscout.adapters.workday import WorkdayAdapter
+from jobscout.adapters.workday import WorkdayAdapter, parse_workday_detail
 from jobscout.enrich import derive_cap_exempt
 from jobscout.normalize import raw_to_job
 
@@ -189,6 +189,132 @@ def test_workday_country_defaults_us_for_bare_campus_location():
     http = FakeHttpPostGet(post_payload, {})
     jobs = list(adapter.search([], None, 5, None, http))
     assert jobs and jobs[0]["country"] == "us"
+
+
+def test_workday_detail_location_and_country_override_tenant_stamp():
+    # Global tenant (e.g. NVIDIA): listing hides cities behind "2 Locations",
+    # but the detail JSON names them AND the real country. The detail country
+    # must override the tenant-level "us" stamp so is_us_job can drop it.
+    post_payload = {"total": 1, "jobPostings": [{
+        "title": "System Software Engineer, AI Data Platform",
+        "externalPath": "/job/Vietnam-Ho-Chi-Minh-City/SSE_JR2020889",
+        "locationsText": "2 Locations", "postedOn": "Posted Yesterday",
+        "bulletFields": ["JR2020889"],
+    }]}
+    get_payload = {"jobPostingInfo": {
+        "jobDescription": "<p>Build infra</p>",
+        "location": "Vietnam, Ho Chi Minh City",
+        "additionalLocations": ["Vietnam, Hanoi"],
+        "country": {"descriptor": "Vietnam"},
+    }}
+    adapter = WorkdayAdapter(tenants=[
+        {"tenant": "nvidia", "region": "wd5", "site": "NVIDIAExternalCareerSite",
+         "type": "for_profit", "name": "NVIDIA"}
+    ])
+    http = FakeHttpPostGet(post_payload, get_payload)
+    jobs = list(adapter.search(["engineer"], None, 5, None, http))
+    assert len(jobs) == 1
+    j = jobs[0]
+    assert j["location"] == "Vietnam, Ho Chi Minh City; Vietnam, Hanoi"
+    assert j["country"] == "Vietnam"
+    from jobscout.normalize import is_us_job
+    assert is_us_job(j["country"], j["location"]) is False
+
+
+def test_workday_detail_us_multi_location_kept_with_real_cities():
+    post_payload = {"total": 1, "jobPostings": [{
+        "title": "Data Scientist", "externalPath": "/job/Multi/DS_R7",
+        "locationsText": "3 Locations", "postedOn": "Posted Today",
+        "bulletFields": ["R7"],
+    }]}
+    get_payload = {"jobPostingInfo": {
+        "jobDescription": "<p>Model</p>",
+        "location": "US, CA, Santa Clara",
+        "additionalLocations": ["US, TX, Austin", "US, WA, Redmond"],
+        "country": {"descriptor": "United States of America"},
+    }}
+    adapter = WorkdayAdapter(tenants=[
+        {"tenant": "nvidia", "region": "wd5", "site": "NVIDIAExternalCareerSite",
+         "type": "for_profit", "name": "NVIDIA"}
+    ])
+    http = FakeHttpPostGet(post_payload, get_payload)
+    jobs = list(adapter.search([], None, 5, None, http))
+    assert len(jobs) == 1
+    j = jobs[0]
+    assert j["location"].startswith("US, CA, Santa Clara;")
+    from jobscout.normalize import is_us_job
+    assert is_us_job(j["country"], j["location"]) is True
+
+
+@pytest.mark.parametrize(
+    "location_slug",
+    ["Vietnam-Ho-Chi-Minh-City", "Ho-Chi-Minh-City", "Hanoi"],
+)
+def test_workday_global_board_detail_failure_uses_foreign_path_hint(location_slug):
+    """A global board must not become US when its detail request is unavailable."""
+    post_payload = {"total": 1, "jobPostings": [{
+        "title": "System Software Engineer",
+        "externalPath": f"/job/{location_slug}/SSE_JR2020889",
+        "locationsText": "2 Locations",
+        "postedOn": "Posted Yesterday",
+        "bulletFields": ["JR2020889"],
+    }]}
+    adapter = WorkdayAdapter(
+        tenants=[{
+            "tenant": "nvidia",
+            "region": "wd5",
+            "site": "NVIDIAExternalCareerSite",
+            "type": "for_profit",
+            "name": "NVIDIA",
+        }],
+        fetch_descriptions=False,
+    )
+    jobs = list(adapter.search([], None, 5, None, FakeHttpPostGet(post_payload, {})))
+    assert len(jobs) == 1
+    assert jobs[0]["country"] is None
+    assert jobs[0]["location"] == location_slug.replace("-", " ")
+    from jobscout.normalize import is_us_job
+    assert is_us_job(jobs[0]["country"], jobs[0]["location"]) is False
+
+
+def test_workday_global_board_detail_failure_uses_us_path_hint():
+    post_payload = {"total": 1, "jobPostings": [{
+        "title": "Software Engineer",
+        "externalPath": "/job/US-CA-Santa-Clara/SWE_JR8",
+        "locationsText": "2 Locations",
+        "postedOn": "Posted Today",
+        "bulletFields": ["JR8"],
+    }]}
+    adapter = WorkdayAdapter(
+        tenants=[{
+            "tenant": "nvidia", "region": "wd5", "site": "NVIDIAExternalCareerSite",
+            "type": "for_profit", "name": "NVIDIA",
+        }],
+        fetch_descriptions=False,
+    )
+    jobs = list(adapter.search([], None, 5, None, FakeHttpPostGet(post_payload, {})))
+    assert len(jobs) == 1
+    assert jobs[0]["country"] is None
+    assert jobs[0]["location"] == "US CA Santa Clara"
+    from jobscout.normalize import is_us_job
+    assert is_us_job(jobs[0]["country"], jobs[0]["location"]) is True
+
+
+def test_workday_detail_parser_handles_descriptor_locations_and_nested_country():
+    description, location, country = parse_workday_detail({"jobPostingInfo": {
+        "jobDescription": "C&#43;&#43; systems",
+        "location": {"descriptor": "US, CA, Santa Clara"},
+        "additionalLocations": [
+            {"descriptor": "US, TX, Austin"},
+            {"descriptor": "US, TX, Austin"},
+        ],
+        "jobRequisitionLocation": {
+            "country": {"descriptor": "United States of America", "alpha2Code": "US"}
+        },
+    }})
+    assert description == "C++ systems"
+    assert location == "US, CA, Santa Clara; US, TX, Austin"
+    assert country == "United States of America"
 
 
 def test_workday_listings_only_when_descriptions_disabled():

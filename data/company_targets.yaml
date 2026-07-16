@@ -1,0 +1,69 @@
+# Curated company watchlist (employers worth checking directly on their own ATS).
+# Scope: unique employers in Apply/Flag result tables only. Companies mentioned
+# solely as stale, over-level, clearance, or no-sponsorship skips are excluded.
+#
+# A verified public ATS row is enabled and is also configured in sources.yaml.
+# Bespoke, Oracle, YC, or otherwise unsupported boards use ats=none and remain
+# safe direct-apply links; they are never passed to an ingestion adapter.
+companies:
+  - {slug: marquette-university, ats: none, name: Marquette University, careers_url: "https://employment.marquette.edu/", tier: "Universities & Research", employer_type: university, cap_exempt_hint: "yes", enabled: false, direct_apply_only: true}
+  - {slug: amazon, ats: none, name: Amazon, careers_url: "https://www.amazon.jobs/", tier: "FAANG + Top Tech", enabled: false, direct_apply_only: true}
+  - {slug: zappos, ats: none, name: Zappos, careers_url: "https://www.zappos.com/about/stories/careers", tier: "Mid-Size Tech", enabled: false, direct_apply_only: true}
+  - {slug: lyft, ats: greenhouse, name: Lyft, careers_url: "https://job-boards.greenhouse.io/lyft", tier: "Mid-Size Tech"}
+  - {slug: transunion, ats: none, name: TransUnion, careers_url: "https://www.transunion.com/careers", tier: "Mid-Size Tech", enabled: false, direct_apply_only: true}
+  - {slug: blackrock, ats: none, name: BlackRock, careers_url: "https://careers.blackrock.com/", tier: "Finance & Banks", enabled: false, direct_apply_only: true}
+  - {slug: whatnot, ats: none, name: Whatnot, careers_url: "https://www.whatnot.com/careers", tier: Startups, enabled: false, direct_apply_only: true}
+  - {slug: amazon-web-services, ats: none, name: "Amazon Web Services (AWS)", careers_url: "https://www.amazon.jobs/content/en/teams/amazon-web-services", tier: "FAANG + Top Tech", enabled: false, direct_apply_only: true}
+  - {slug: qualcomm, ats: none, name: Qualcomm, careers_url: "https://careers.qualcomm.com/careers", tier: "FAANG + Top Tech", enabled: false, direct_apply_only: true}
+  - {slug: stellantis, ats: none, name: Stellantis, careers_url: "https://careers.stellantis.com/", tier: "Mid-Size Tech", enabled: false, direct_apply_only: true}
+  - {slug: ibotta, ats: ashby, name: Ibotta, careers_url: "https://jobs.ashbyhq.com/ibotta", tier: "Mid-Size Tech"}
+  - {slug: microsoft, ats: none, name: Microsoft, careers_url: "https://jobs.careers.microsoft.com/global/en/search", tier: "FAANG + Top Tech", enabled: false, direct_apply_only: true}
+  - {slug: gumgum, ats: greenhouse, name: GumGum, careers_url: "https://job-boards.greenhouse.io/gumgum", tier: "Mid-Size Tech"}
+  - {slug: teamworks, ats: ashby, name: Teamworks, careers_url: "https://jobs.ashbyhq.com/teamworks", tier: Startups}
+  - {slug: becoming, ats: workable, name: Becoming, careers_url: "https://apply.workable.com/becoming", tier: Startups}
+  - {slug: faradayfuture, ats: greenhouse, name: Faraday Future, careers_url: "https://job-boards.greenhouse.io/faradayfuture", tier: "Mid-Size Tech"}
+  - {slug: hasbro, ats: greenhouse, name: Hasbro, careers_url: "https://job-boards.greenhouse.io/hasbro", tier: "Mid-Size Tech"}
+  - {slug: united-airlines, ats: none, name: United Airlines, careers_url: "https://careers.united.com/us/en/", tier: "Mid-Size Tech", enabled: false, direct_apply_only: true}
+  - {slug: wayfair, ats: smartrecruiters, name: Wayfair, careers_url: "https://jobs.smartrecruiters.com/wayfair", tier: "Mid-Size Tech"}
+  - {slug: verve, ats: greenhouse, name: Verve, careers_url: "https://job-boards.greenhouse.io/verve", tier: Startups}
+  - {slug: gridware, ats: lever, name: Gridware, careers_url: "https://jobs.lever.co/gridware", tier: Startups}
+  - {slug: multimediallc, ats: workable, name: "Multi Media LLC", careers_url: "https://apply.workable.com/multimediallc", tier: "Mid-Size Tech"}
+  - {slug: ford, ats: none, name: Ford Motor Company, careers_url: "https://www.careers.ford.com/", tier: "Mid-Size Tech", enabled: false, direct_apply_only: true}
+  - {slug: otterai, ats: greenhouse, name: Otter.ai, careers_url: "https://job-boards.greenhouse.io/otterai", tier: "Mid-Size Tech"}
+  - {slug: nearmap, ats: smartrecruiters, name: Nearmap, careers_url: "https://jobs.smartrecruiters.com/nearmap", tier: "Mid-Size Tech"}
+  - {slug: pnc, ats: none, name: PNC, careers_url: "https://careers.pnc.com/global/en", tier: "Finance & Banks", enabled: false, direct_apply_only: true}
+  - {slug: scaleai, ats: greenhouse, name: Scale AI, careers_url: "https://job-boards.greenhouse.io/scaleai", tier: "Mid-Size Tech"}
+  - {slug: brainco, ats: ashby, name: Brain Co., careers_url: "https://jobs.ashbyhq.com/brainco", tier: Startups}
+  - {slug: parspec, ats: ashby, name: Parspec, careers_url: "https://jobs.ashbyhq.com/parspec", tier: Startups}
+  - {slug: roamly, ats: workable, name: Roamly, careers_url: "https://apply.workable.com/roamly", tier: Startups}
+  - {slug: oppo-us-research-center, ats: workable, name: OPPO US Research Center, careers_url: "https://apply.workable.com/oppo-us-research-center", tier: "Mid-Size Tech"}
+  - {slug: huggingface, ats: workable, name: Hugging Face, careers_url: "https://apply.workable.com/huggingface", tier: "Mid-Size Tech"}
+  - {slug: biohub, ats: greenhouse, name: Biohub, careers_url: "https://job-boards.greenhouse.io/biohub", tier: "Universities & Research", employer_type: unclear}
+  - {slug: ponyai, ats: none, name: Pony.ai, careers_url: "https://jobs.workable.com/view/k8DRDpnZgUmVpNfZooCWe1/machine-learning-engineer---reinforcement-learning-in-fremont-at-pony.ai", tier: "Mid-Size Tech", enabled: false, direct_apply_only: true}
+  - {slug: waystar, ats: none, name: Waystar, careers_url: "https://www.waystar.com/careers/", tier: Healthcare, enabled: false, direct_apply_only: true}
+  - {slug: pinterest, ats: greenhouse, name: Pinterest, careers_url: "https://job-boards.greenhouse.io/pinterest", tier: "Mid-Size Tech"}
+  - {slug: gitlab, ats: greenhouse, name: GitLab, careers_url: "https://job-boards.greenhouse.io/gitlab", tier: "Mid-Size Tech"}
+  - {slug: chapter-one, ats: none, name: Chapter One, careers_url: "https://form.asana.com/?k=CqUazsdmPzvsuFEQOvhMNw&d=1204804994771245", tier: Startups, employer_type: unclear, enabled: false, direct_apply_only: true}
+  - {slug: airbnb, ats: greenhouse, name: Airbnb, careers_url: "https://job-boards.greenhouse.io/airbnb", tier: "Mid-Size Tech"}
+  - {slug: brex, ats: greenhouse, name: Brex, careers_url: "https://job-boards.greenhouse.io/brex", tier: Startups}
+  - {slug: robinhood, ats: greenhouse, name: Robinhood, careers_url: "https://job-boards.greenhouse.io/robinhood", tier: "Fintech & Payments"}
+  - {slug: dana-farber, ats: none, name: Dana-Farber Cancer Institute, careers_url: "https://careers.dana-farber.org/jobs/", tier: Healthcare, employer_type: nonprofit, cap_exempt_hint: likely, enabled: false, direct_apply_only: true}
+  - {slug: uiuc, ats: none, name: University of Illinois Urbana-Champaign, careers_url: "https://jobs.illinois.edu/", tier: "Universities & Research", employer_type: university, cap_exempt_hint: "yes", enabled: false, direct_apply_only: true}
+  - {slug: botauto, ats: greenhouse, name: Bot Auto, careers_url: "https://job-boards.greenhouse.io/botauto", tier: Startups}
+  - {slug: notion, ats: ashby, name: Notion, careers_url: "https://jobs.ashbyhq.com/notion", tier: "Mid-Size Tech"}
+  - {slug: bytedance, ats: none, name: ByteDance, careers_url: "https://joinbytedance.com/search/7538929248565381383", tier: "FAANG + Top Tech", enabled: false, direct_apply_only: true}
+  - {slug: kla, ats: workday, name: KLA, careers_url: "https://kla.wd1.myworkdayjobs.com/Search", tier: "FAANG + Top Tech", region: wd1, site: Search}
+  - {slug: abbott, ats: workday, name: Abbott, careers_url: "https://abbott.wd5.myworkdayjobs.com/abbottcareers", tier: Healthcare, region: wd5, site: abbottcareers}
+  - {slug: bristolmyerssquibb, ats: workday, name: Bristol Myers Squibb, careers_url: "https://bristolmyerssquibb.wd5.myworkdayjobs.com/bms", tier: Healthcare, region: wd5, site: bms}
+  - {slug: NBCUniversal3, ats: smartrecruiters, name: NBCUniversal, careers_url: "https://jobs.smartrecruiters.com/NBCUniversal3", tier: "Mid-Size Tech"}
+  - {slug: jabil, ats: workday, name: Jabil, careers_url: "https://jabil.wd5.myworkdayjobs.com/Jabil_Careers", tier: "Mid-Size Tech", region: wd5, site: Jabil_Careers}
+  - {slug: jpmorgan-chase, ats: none, name: JPMorgan Chase, careers_url: "https://jpmc.fa.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_1/job/210768686", tier: "Finance & Banks", enabled: false, direct_apply_only: true}
+  - {slug: disney, ats: workday, name: Disney Entertainment and ESPN Product & Technology, careers_url: "https://disney.wd5.myworkdayjobs.com/disneycareer", tier: "Mid-Size Tech", region: wd5, site: disneycareer}
+  - {slug: cvshealth, ats: workday, name: "CVS Health, Oak Street Health", careers_url: "https://cvshealth.wd1.myworkdayjobs.com/CVS_Health_Careers", tier: Healthcare, region: wd1, site: CVS_Health_Careers}
+  - {slug: nvidia, ats: workday, name: NVIDIA, careers_url: "https://nvidia.wd5.myworkdayjobs.com/NVIDIAExternalCareerSite", tier: "FAANG + Top Tech", region: wd5, site: NVIDIAExternalCareerSite}
+  - {slug: fiserv, ats: workday, name: Fiserv, careers_url: "https://fiserv.wd5.myworkdayjobs.com/ext", tier: "Fintech & Payments", region: wd5, site: ext}
+  - {slug: dome-systems, ats: none, name: Dome Systems, careers_url: "https://www.domesystems.ai/careers/573303b2-efe1-409d-bf58-968a6a2f82a0", tier: Startups, enabled: false, direct_apply_only: true}
+  - {slug: general-analysis, ats: none, name: General Analysis, careers_url: "https://generalanalysis.com/about/careers/software-engineer-full-stack", tier: Startups, enabled: false, direct_apply_only: true}
+  - {slug: blackstar-computers, ats: none, name: Blackstar Computers, careers_url: "https://www.blackstar.inc/careers/machine-learning-engineer-researcher", tier: Startups, enabled: false, direct_apply_only: true}
+  - {slug: mindfort, ats: none, name: MindFort, careers_url: "https://www.ycombinator.com/companies/mindfort/jobs/g3aPQUZ-software-engineer", tier: Startups, enabled: false, direct_apply_only: true}
+  - {slug: buildforever, ats: none, name: BuildForever, careers_url: "https://www.buildforever.com/careers", tier: Startups, enabled: false, direct_apply_only: true}

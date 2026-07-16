@@ -1,6 +1,8 @@
-import { useRef, useState } from 'react'
+import { useState } from 'react'
+import { UploadSimple } from '@phosphor-icons/react'
 import type { Job, Verdict } from '../types'
 import { useMatchResume, useDeleteProfile } from '../api/client'
+import { useActiveProfile } from '../ProfileContext'
 import { SponsorshipBadge } from './SponsorshipBadge'
 
 function Chips({ items, cls, label }: { items: string[]; cls: string; label: string }) {
@@ -8,20 +10,21 @@ function Chips({ items, cls, label }: { items: string[]; cls: string; label: str
   return (
     <div className="mt-1 flex flex-wrap items-center gap-1">
       <span className="text-xs font-medium text-slate-400">{label}</span>
-      {items.map((t) => (
-        <span key={t} className={`inline-flex items-center rounded px-1.5 py-0.5 text-xs font-medium ${cls}`}>
+      {items.slice(0, 8).map((t) => (
+        <span key={t} className={`tag ${cls}`}>
           {t}
         </span>
       ))}
+      {items.length > 8 && <span className="tag bg-slate-100 text-slate-500">+{items.length - 8}</span>}
     </div>
   )
 }
 
 function MatchRow({ job, verdict }: { job: Job; verdict?: Verdict }) {
   return (
-    <div className="border-b border-slate-100 px-4 py-3 hover:bg-white">
-      <div className="flex items-start justify-between gap-3">
-        <div>
+    <div className="border-b border-slate-100 px-4 py-3 hover:bg-slate-50/70">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0">
           <a href={job.url} target="_blank" rel="noopener noreferrer"
             className="font-medium text-slate-800 hover:text-blue-600">
             {job.title}
@@ -30,9 +33,9 @@ function MatchRow({ job, verdict }: { job: Job; verdict?: Verdict }) {
             {job.company}{job.location_raw ? ` · ${job.location_raw}` : ''}
           </p>
         </div>
-        <div className="flex flex-shrink-0 items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2 sm:flex-shrink-0">
           {verdict && (
-            <span className="rounded-full bg-blue-50 px-2 py-0.5 text-xs font-semibold text-blue-700">
+            <span className="tag bg-signal-50 font-semibold text-signal-800">
               fit {Math.round(verdict.score * 100)}%
             </span>
           )}
@@ -55,12 +58,17 @@ function MatchRow({ job, verdict }: { job: Job; verdict?: Verdict }) {
  */
 export function ResumeDropMatch() {
   const [dragOver, setDragOver] = useState(false)
-  const inputRef = useRef<HTMLInputElement>(null)
   const match = useMatchResume()
   const del = useDeleteProfile()
+  const { activeProfileId, setActiveProfileId } = useActiveProfile()
 
   const onFile = (file: File | undefined) => {
-    if (file) match.mutate({ file, limit: 12 })
+    if (file) {
+      match.mutate(
+        { file, limit: 12 },
+        { onSuccess: ({ profile }) => setActiveProfileId(profile.id) },
+      )
+    }
   }
 
   const data = match.data
@@ -69,25 +77,26 @@ export function ResumeDropMatch() {
   return (
     <div>
         {/* Drop zone */}
-        <div
+        <label
+          htmlFor="resume-upload"
           onDragOver={(e) => { e.preventDefault(); setDragOver(true) }}
           onDragLeave={() => setDragOver(false)}
           onDrop={(e) => { e.preventDefault(); setDragOver(false); onFile(e.dataTransfer.files?.[0]) }}
-          onClick={() => inputRef.current?.click()}
-          className={`cursor-pointer rounded-xl border-2 border-dashed px-6 py-10 text-center transition ${
-            dragOver ? 'border-blue-500 bg-blue-50' : 'border-slate-300 bg-white hover:border-slate-400'
+          className={`control-focus flex cursor-pointer flex-col items-center rounded-xl border border-dashed px-6 py-8 text-center focus-within:ring-2 focus-within:ring-signal-500 ${
+            dragOver ? 'border-signal-500 bg-signal-50' : 'border-slate-300 bg-white hover:border-signal-300 hover:bg-signal-50/30'
           }`}
         >
           <input
-            ref={inputRef} type="file" className="hidden"
+            id="resume-upload" type="file" className="sr-only"
             accept=".pdf,.docx,.txt,.md,.json"
             onChange={(e) => onFile(e.target.files?.[0] ?? undefined)}
           />
+          <span className="mb-2 flex h-9 w-9 items-center justify-center rounded-lg border border-slate-200 bg-slate-50 text-slate-500"><UploadSimple size={18} /></span>
           <p className="text-sm font-medium text-slate-700">
             {match.isPending ? 'Reading your resume…' : 'Drop your resume here, or click to choose a file'}
           </p>
-          <p className="mt-1 text-xs text-slate-400">PDF, DOCX, TXT, or JSON · parsed locally, matched against live jobs</p>
-        </div>
+          <p className="mt-1 text-xs text-slate-500">PDF, DOCX, TXT, or JSON · parsed locally, matched against live jobs</p>
+        </label>
 
         {match.isError && (
           <div className="mt-4 rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
@@ -97,9 +106,9 @@ export function ResumeDropMatch() {
 
         {/* Extracted profile */}
         {profile && (
-          <div className="mt-6 rounded-xl border border-slate-200 bg-white p-4">
-            <div className="flex items-start justify-between">
-              <div>
+          <div className="workspace-surface mt-4 p-4">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div className="min-w-0">
                 <h2 className="text-sm font-semibold text-slate-800">Extracted profile · {profile.label}</h2>
                 <p className="mt-0.5 text-xs text-slate-500">
                   {profile.yoe_max} yrs · {profile.seniority_max}
@@ -111,8 +120,16 @@ export function ResumeDropMatch() {
               </div>
               <button
                 type="button"
-                onClick={() => { del.mutate(profile.id); match.reset() }}
-                className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-500 hover:bg-slate-50"
+                onClick={() => {
+                  if (!window.confirm('Delete this profile and its saved matching evidence?')) return
+                  del.mutate(profile.id, {
+                    onSuccess: () => {
+                      if (activeProfileId === profile.id) setActiveProfileId(null)
+                      match.reset()
+                    },
+                  })
+                }}
+                className="control-focus h-8 rounded-lg px-3 text-xs font-medium text-rose-600 hover:bg-rose-50"
               >
                 Delete profile
               </button>
@@ -123,8 +140,8 @@ export function ResumeDropMatch() {
 
         {/* Matched jobs */}
         {data && (
-          <div className="mt-6 overflow-hidden rounded-xl border border-slate-200 bg-white">
-            <div className="border-b border-slate-100 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-slate-400">
+          <div className="workspace-surface mt-4 overflow-hidden">
+            <div className="border-b border-slate-100 px-4 py-2 font-mono text-[0.64rem] font-semibold uppercase tracking-[0.08em] text-slate-500">
               {data.jobs.length} matched roles (ranked by fit + sponsorship)
             </div>
             {data.jobs.length === 0 ? (

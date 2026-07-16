@@ -1,7 +1,7 @@
 # JobScout: Multi-Portal Job Aggregation and Filtering Engine
 
 **Version:** 1.0
-**Owner:** Narahara Chari Dingari
+**Owner:** JobScout maintainers
 **Status:** Draft for build
 **Stack philosophy:** Open source first, local-first, no paid API dependency required to run core features.
 

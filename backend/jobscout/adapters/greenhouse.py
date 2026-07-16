@@ -45,6 +45,30 @@ def normalize_company_entries(companies: list[Any] | None) -> list[tuple[str, st
     return out
 
 
+def normalize_named_company_entries(
+    companies: list[Any] | None,
+) -> list[tuple[str, str, str]]:
+    """Return ``(board_token, employer_type, display_name)`` config entries.
+
+    Greenhouse's public jobs endpoint does not return the employer name.  Without
+    this mapping the app stores opaque board tokens such as ``rampcom`` as the
+    company, which weakens sponsorship lookups and makes the UI less trustworthy.
+    Existing string-only configs remain valid and fall back to the token.
+    """
+    out: list[tuple[str, str, str]] = []
+    for entry in companies or []:
+        if isinstance(entry, dict):
+            token = entry.get("token") or entry.get("name")
+            employer_type = entry.get("type") or "unclear"
+            display_name = entry.get("display_name") or entry.get("company") or token
+            if token:
+                out.append((str(token), str(employer_type), str(display_name)))
+        elif entry:
+            token = str(entry)
+            out.append((token, "unclear", token))
+    return out
+
+
 def _parse_updated_at(value: str | None) -> datetime | None:
     """Parse Greenhouse's ``updated_at`` ISO-8601 timestamp into an aware UTC
     datetime.  Returns ``None`` if the value is falsy or unparseable."""
@@ -84,7 +108,11 @@ class GreenhouseAdapter:
     store_full_description = True
 
     def __init__(self, companies: list[Any] | None = None) -> None:
-        self.companies: list[tuple[str, str]] = normalize_company_entries(companies)
+        self.companies: list[tuple[str, str, str]] = normalize_named_company_entries(companies)
+        # Populated only after every job in a board's successful response has
+        # been consumed. Watchlist refreshes use this to close missing roles
+        # safely; failed and budget-truncated boards are never considered done.
+        self.completed_boards: set[str] = set()
 
     # ------------------------------------------------------------------
     # Protocol implementation
@@ -133,7 +161,7 @@ class GreenhouseAdapter:
         # keyword (keyword_title_match). Empty keywords → keep everything.
         total_yielded = 0
 
-        for board_token, employer_type in self.companies:
+        for board_token, employer_type, display_name in self.companies:
             if total_yielded >= results_wanted:
                 break
 
@@ -210,13 +238,14 @@ class GreenhouseAdapter:
 
                     yield {
                         "title": title,
-                        "company": board_token,
+                        "company": display_name,
                         "url": url_value,
                         "description": description,
                         "location": location_name,
                         "posted_date": updated_at_raw,
                         "source_job_id": str(job_id) if job_id is not None else None,
                         "employer_type": employer_type,
+                        "_board_slug": board_token,
                     }
                     total_yielded += 1
                 except Exception as exc:  # noqa: BLE001
@@ -227,3 +256,8 @@ class GreenhouseAdapter:
                         exc,
                     )
                     continue
+            else:
+                # The full successful board was walked without hitting the
+                # global result cap, so downstream lifecycle code may compare
+                # it with the previous checkpoint.
+                self.completed_boards.add(board_token)

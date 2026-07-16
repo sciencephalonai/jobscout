@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import hashlib
+import html
 import json
 import re
+from contextlib import suppress
 from datetime import UTC, datetime
 from typing import Any, Literal, cast
 
@@ -141,6 +143,49 @@ def derive_category(title: str) -> str:
     return "other"
 
 
+# Phrases that mark an explicit new-grad / university / early-career / rotational
+# program — the best-fit, least-contested roles for fresh graduates.
+_NEW_GRAD_HINTS = (
+    "new grad", "new graduate", "new-grad", "newgrad", "new college grad",
+    "recent graduate", "recent grad", "university graduate", "university grad",
+    "early career", "early-career", "earlycareer", "rotational program", "rotation program",
+    "graduate program", "grad program", "graduate rotational", "campus hire", "campus recruit",
+    "university recruiting", "university program", "leadership development program",
+    "entry level program", "entry-level program", "apprenticeship", "apprentice program",
+)
+# Bound the description scan so a passing mention deep in a JD doesn't over-trigger.
+_NEW_GRAD_DESC_CHARS = 800
+_STRUCTURED_NEW_GRAD = re.compile(
+    r"\b(?:employee type|career level|job level|position type)\s*:?\s*"
+    r"(?:new college grad|new grad(?:uate)?|early[ -]career)\b",
+    re.I,
+)
+
+
+def detect_new_grad_program(title: str | None, description: str | None = None) -> bool:
+    """True when the posting is an explicit new-grad / early-career / rotational program.
+
+    Title-weighted (most programs say it in the title); also scans the start of the
+    description. Deterministic keyword match — no LLM, runs for every source at ingest.
+    """
+    hay = (title or "").lower()
+    if any(h in hay for h in _NEW_GRAD_HINTS):
+        return True
+    if description:
+        plain_description = re.sub(
+            r"\s+", " ", re.sub(r"<[^>]+>", " ", html.unescape(description))
+        )
+        # Some ATS descriptions put an authoritative classification such as
+        # ``Employee Type: New College Grad`` after the benefits/requirements
+        # body.  This structured label is safe to scan across the full text;
+        # the looser prose hints remain bounded below to avoid incidental hits.
+        if _STRUCTURED_NEW_GRAD.search(plain_description):
+            return True
+        bounded = plain_description[:_NEW_GRAD_DESC_CHARS].lower()
+        return any(h in bounded for h in _NEW_GRAD_HINTS)
+    return False
+
+
 def normalize_employment_type(raw: str | None) -> str:
     """Map a free-text employment/job-type string to a canonical bucket.
 
@@ -234,10 +279,7 @@ def parse_posted_date(
 
     if isinstance(raw, datetime):
         # Ensure timezone-aware UTC
-        if raw.tzinfo is None:
-            raw = raw.replace(tzinfo=UTC)
-        else:
-            raw = raw.astimezone(UTC)
+        raw = raw.replace(tzinfo=UTC) if raw.tzinfo is None else raw.astimezone(UTC)
         return raw, False
 
     # String path
@@ -249,10 +291,7 @@ def parse_posted_date(
     # not an estimated one.
     try:
         dt = datetime.fromisoformat(raw_str)
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=UTC)
-        else:
-            dt = dt.astimezone(UTC)
+        dt = dt.replace(tzinfo=UTC) if dt.tzinfo is None else dt.astimezone(UTC)
         return dt, False
     except ValueError:
         pass
@@ -312,15 +351,71 @@ _US_STATE_NAMES = {
     "district of columbia",
 }
 # A remote job is US-eligible when, after removing the word "remote" and
-# punctuation, the leftover geography is empty or a generic/global/US term.
-# Anything else (a specific foreign place like "regensburg" or "brazil") is not.
+# punctuation, the leftover geography is empty or an explicitly-US / no-geography
+# term. Anything else — a specific foreign place ("regensburg", "brazil") OR a
+# deliberately global scope ("worldwide", "anywhere") — is not: global-scoped
+# postings on aggregator boards skew non-US employers and spam.
 _GENERIC_REMOTE = {
-    "", "anywhere", "anywhere in the world", "anywhere in world", "worldwide",
-    "global", "international", "everywhere", "fully", "flexible", "distributed",
+    "", "fully", "flexible", "distributed",
     "home", "home based", "work from home", "wfh", "us", "usa",
     "united states", "america", "north america", "americas", "us based",
-    "us only", "usa only", "remote us", "global remote",
+    "us only", "usa only", "remote us",
 }
+
+# Country names (and unambiguous regions) as they appear in ATS location strings.
+# Used to catch jobs whose adapter over-stamped country="us" at the tenant level
+# (e.g. a global Workday board) while the per-job location names a foreign place.
+# NOTE: checked only AFTER _has_us_signal, so US homonyms ("New Mexico",
+# "Georgia", "Washington") are already resolved as US by then.
+_NON_US_PLACES = {
+    "afghanistan", "argentina", "australia", "austria", "bangladesh", "belgium",
+    "brazil", "bulgaria", "canada", "chile", "china", "colombia", "costa rica",
+    "croatia", "czech republic", "czechia", "denmark", "ecuador", "egypt",
+    "estonia", "finland", "france", "germany", "greece", "hong kong", "hungary",
+    "india", "indonesia", "ireland", "israel", "italy", "japan", "kenya",
+    "latvia", "lithuania", "malaysia", "mexico", "netherlands", "new zealand",
+    "nigeria", "norway", "pakistan", "peru", "philippines", "poland",
+    "portugal", "romania", "russia", "saudi arabia", "serbia", "singapore",
+    "slovakia", "slovenia", "south africa", "south korea", "korea", "spain",
+    "sweden", "switzerland", "taiwan", "thailand", "turkey", "ukraine",
+    "united arab emirates", "united kingdom", "uruguay", "vietnam",
+    "emea", "apac", "latam",
+    # 3-letter ISO codes seen in ATS location strings ("Bangalore,IND",
+    # "Singapore,SGP"). Only codes that aren't English words / US homonyms.
+    "ind", "sgp", "gbr", "deu", "chn", "isr", "twn", "kor", "jpn", "vnm",
+    "mys", "phl", "idn", "irl", "esp", "nld", "swe", "prt", "ukr", "tur",
+    # (no "chl"/"col" — they collide with US campus building codes)
+    "tha", "nzl", "arg", "pak", "bgd", "lka", "egy", "zaf",
+}
+_NON_US_PLACES_RE = re.compile(
+    r"\b(" + "|".join(re.escape(p) for p in sorted(_NON_US_PLACES, key=len, reverse=True)) + r")\b"
+)
+
+# Unambiguous foreign cities that show up in job TITLES on remote aggregator
+# boards ("Software Engineer, Platform - Busan, South Korea" with location
+# "Remote"). Kept small and unambiguous — NO names that are also common US
+# places (dublin OH, vancouver WA, melbourne FL, london OH, paris TX …); the
+# titles that use those almost always append the country, which the country
+# list catches.
+_NON_US_CITIES = {
+    "montreal", "toronto", "berlin", "munich",
+    "madrid", "barcelona", "bilbao", "amsterdam", "warsaw", "lisbon",
+    "zurich", "stockholm", "copenhagen", "prague", "vienna", "brussels",
+    "busan", "seoul", "hsinchu", "taipei", "tokyo", "osaka", "bangalore",
+    "bengaluru", "hyderabad", "chennai", "mumbai", "pune", "gurgaon", "noida",
+    "tel aviv", "sao paulo", "belo horizonte", "bogota", "buenos aires",
+    "mexico city", "guadalajara", "ho chi minh", "hanoi", "manila", "jakarta",
+    "kyiv", "bucharest", "belgrade", "istanbul", "cairo", "lagos", "nairobi",
+    "sydney", "auckland",
+}
+_TITLE_FOREIGN_RE = re.compile(
+    r"\b("
+    + "|".join(
+        re.escape(p)
+        for p in sorted(_NON_US_PLACES | _NON_US_CITIES, key=len, reverse=True)
+    )
+    + r")\b"
+)
 
 
 # Major US cities (tech hubs) that are overwhelmingly US — used to recognise
@@ -336,39 +431,84 @@ _US_CITIES = {
 
 
 def _has_us_signal(loc: str, tokens: list[str]) -> bool:
+    # Strong signals first: explicit US mentions and full state names.
     if any(tok in loc for tok in ("united states", "u.s.", "u.s.a")):
         return True
     if {"usa", "us", "america"} & set(tokens):
         return True
     if any(name in loc for name in _US_STATE_NAMES):
         return True
+    # Weak signals below can be faked by foreign strings — a trailing ISO
+    # country code reads as a state abbreviation ("Bangalore, Karnataka, in"
+    # → Indiana). Suppress them when the location also names a foreign place.
+    if _TITLE_FOREIGN_RE.search(loc):
+        return False
     # "City, ST" pattern with a real US state abbreviation.
     if any(re.search(rf",\s*{ab}\b", loc) for ab in _US_STATE_ABBR):
         return True
     # Bare major US city names (no state code).
-    if any(city in loc for city in _US_CITIES):
+    return any(city in loc for city in _US_CITIES)
+
+
+def _has_explicit_us_location(loc: str) -> bool:
+    """True when one location segment explicitly identifies a US location.
+
+    This is deliberately narrower than :func:`_has_us_signal`: it is used only
+    to rescue mixed-country multi-location jobs whose primary ``country`` field
+    is foreign.  Full state names such as "Georgia" are not sufficient on their
+    own because they are ambiguous outside the United States.
+    """
+    tokens = re.findall(r"[a-z]+", loc)
+    if any(marker in loc for marker in ("united states", "u.s.", "u.s.a")):
         return True
-    return False
+    if {"usa", "us"} & set(tokens):
+        return True
+    return any(re.search(rf",\s*{abbr}\b", loc) for abbr in _US_STATE_ABBR)
 
 
 def is_us_job(
     country: str | None,
     location_raw: str | None,
     remote_mode: str = "unknown",
+    title: str | None = None,
 ) -> bool:
     """Heuristic: does this job belong on a US-only board?
 
     Keeps US-located roles (country US, or a US state / "City, ST" / US mention)
     and remote roles that are US-eligible or geographically unspecified. Drops
-    roles tied to a clearly non-US country/region.
+    roles tied to a clearly non-US country/region — including ones whose only
+    geographic hint is a foreign place in the *title* ("… - Busan, South Korea"
+    with location "Remote").
     """
     c = (country or "").strip().lower()
-    if c:
-        # An explicit country wins: US tokens keep, anything else (gb, in, …) drops.
-        return c in _US_COUNTRY
-
     loc = (location_raw or "").strip().lower()
     tokens = re.findall(r"[a-z]+", loc)
+    ttl = (title or "").strip().lower()
+
+    def _title_is_foreign() -> bool:
+        # Only trusted when the location itself gave no US signal.
+        return bool(ttl) and bool(_TITLE_FOREIGN_RE.search(ttl))
+
+    if c:
+        # A singular non-US country normally drops immediately. Workday's
+        # country descriptor represents only the primary location, however, so
+        # keep a semicolon-delimited multi-location posting when another segment
+        # explicitly names a US option.
+        if c not in _US_COUNTRY:
+            segments = [segment.strip() for segment in loc.split(";") if segment.strip()]
+            return len(segments) > 1 and any(
+                _has_explicit_us_location(segment) for segment in segments
+            )
+        # country="us" may be a tenant-level stamp from a global board (e.g. a
+        # multinational's Workday tenant): don't trust it when the per-job
+        # location/title names a foreign place and carries no US signal.
+        # US-signal check runs FIRST so "New Mexico"/"Georgia" stay US.
+        if loc and _has_us_signal(loc, tokens):
+            return True
+        if loc and _NON_US_PLACES_RE.search(loc):
+            return False
+        return not _title_is_foreign()
+
     if _has_us_signal(loc, tokens):
         return True
 
@@ -376,11 +516,13 @@ def is_us_job(
         # Strip the word "remote"/punctuation and see what geography is left.
         # If nothing specific remains (or only a generic global term), it's
         # US-eligible; a specific non-US place (e.g. "Regensburg", "Brazil") is
-        # NOT a US job and is dropped.
+        # NOT a US job and is dropped. A foreign place in the title ("…, Busan,
+        # South Korea") also disqualifies — remote aggregators put the target
+        # geography there.
         residual = re.sub(r"\bremote\b", " ", loc)
         residual = re.sub(r"[^a-z ]", " ", residual)
         residual = re.sub(r"\s+", " ", residual).strip()
-        return residual in _GENERIC_REMOTE
+        return residual in _GENERIC_REMOTE and not _title_is_foreign()
 
     # Onsite/hybrid with no US signal (e.g. "London", "Berlin") → not a US job.
     return False
@@ -439,22 +581,16 @@ def raw_to_job(raw: dict[str, Any], source: str) -> Job:
     salary_min: float | None = None
     salary_max: float | None = None
     if raw.get("salary_min") is not None:
-        try:
+        with suppress(TypeError, ValueError):
             salary_min = float(raw["salary_min"])
-        except (TypeError, ValueError):
-            pass
     if raw.get("salary_max") is not None:
-        try:
+        with suppress(TypeError, ValueError):
             salary_max = float(raw["salary_max"])
-        except (TypeError, ValueError):
-            pass
 
     # Persist the original dict as JSON for audit / re-enrichment
     raw_payload: str | None = None
-    try:
+    with suppress(TypeError, ValueError):
         raw_payload = json.dumps(raw, default=str)
-    except (TypeError, ValueError):
-        pass
 
     job_id = compute_job_id(company, title, city)
 
@@ -510,6 +646,10 @@ def raw_to_job(raw: dict[str, Any], source: str) -> Job:
         seniority="unclear",
         # Curated adapters may stamp this directly; otherwise enrichment fills it.
         employer_type=employer_type,
+        # A curated new-grad source (e.g. SimplifyJobs) may assert the flag in
+        # the raw dict; the keyword detector remains the fallback for the rest.
+        new_grad_program=bool(raw.get("new_grad_program"))
+        or detect_new_grad_program(title, description),
         enrichment_status="pending",
         raw_payload=raw_payload,
     )

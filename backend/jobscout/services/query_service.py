@@ -5,6 +5,7 @@ saved-search counting. Stateless functions that take the open stores as params.
 from __future__ import annotations
 
 import logging
+import time
 from datetime import date, datetime
 from typing import Any
 
@@ -25,6 +26,37 @@ MATCH_WINDOW = 500
 
 # Cache of resume embeddings keyed by (profile_id, resume hash) — bounded, best-effort.
 _resume_vec_cache: dict[str, list[float]] = {}
+# Resume↔job cosine scores: a Weaviate near_vector query per request otherwise.
+# Keyed by the same (profile, resume) identity as the vector; short TTL so newly
+# ingested jobs pick up a semantic score within minutes (missing → None, which
+# the verdict engine already handles by redistributing that weight).
+_sem_scores_cache: dict[str, tuple[float, dict[str, float]]] = {}
+_SEM_SCORES_TTL_S = 300.0
+
+
+def _profile_search_query(profile: UserProfile) -> str | None:
+    """Build a bounded, evidence-backed retrieval query for recommendation feeds.
+
+    The old For You path pulled the newest 500 records and only ranked that
+    arbitrary slice.  Target roles first, followed by verified resume skills,
+    gives Weaviate's hybrid retrieval a chance to fetch the relevant candidate
+    pool before the deterministic verdict gates run.  No inferred or unsupported
+    keywords are added.
+    """
+    terms: list[str] = []
+    seen: set[str] = set()
+    for raw in [
+        *(profile.target_titles or []),
+        *(profile.interests or []),
+        *(profile.skills or [])[:20],
+    ]:
+        term = " ".join((raw or "").split()).strip()
+        key = term.casefold()
+        if not term or key in seen:
+            continue
+        seen.add(key)
+        terms.append(term)
+    return " ".join(terms)[:1_500] or None
 
 
 def _dedupe_jobs(jobs: list[Job]) -> list[Job]:
@@ -77,6 +109,9 @@ def _semantic_scores(profile: UserProfile, store: WeaviateStore) -> dict[str, fl
     if not text:
         return {}
     key = f"{profile.id}:{hash(text)}"
+    cached = _sem_scores_cache.get(key)
+    if cached is not None and (time.monotonic() - cached[0]) < _SEM_SCORES_TTL_S:
+        return cached[1]
     try:
         vec = _resume_vec_cache.get(key)
         if vec is None:
@@ -84,7 +119,11 @@ def _semantic_scores(profile: UserProfile, store: WeaviateStore) -> dict[str, fl
             if len(_resume_vec_cache) > 64:
                 _resume_vec_cache.clear()
             _resume_vec_cache[key] = vec
-        return store.near_vector_scores(vec, limit=MATCH_WINDOW)
+        scores = store.near_vector_scores(vec, limit=MATCH_WINDOW)
+        if len(_sem_scores_cache) > 32:
+            _sem_scores_cache.clear()
+        _sem_scores_cache[key] = (time.monotonic(), scores)
+        return scores
     except Exception as exc:  # noqa: BLE001 — semantic is optional, never fatal
         log.warning("semantic scoring unavailable (%s) — deterministic only", exc)
         return {}
@@ -103,6 +142,7 @@ def _match_resume_to_jobs(
     if profile is not None:
         filters = build_filters(
             exclude_citizenship_required=profile.reject_citizenship_only,
+            include_active=True,
         )
 
     vector = embed_query(resume_text)
@@ -113,7 +153,9 @@ def _match_resume_to_jobs(
         excluded = relational.get_excluded_job_ids(profile.id)
         jobs = [j for j in jobs if j.job_id not in excluded]
         scored = [(j, score_verdict(j, profile)) for j in jobs]
-        scored.sort(key=lambda pair: priority_key(pair[1]))
+        scored.sort(
+            key=lambda pair: priority_key(pair[1], profile.prefer_cap_exempt)
+        )
         jobs = [j for j, _ in scored]
         verdicts = {v.job_id: v for _, v in scored}
 
@@ -141,6 +183,7 @@ def _count_matches(
         everify=bool(filters.get("everify")),
         date_range=filters.get("date_range"),
         ingested_after=ingested_after,
+        include_active=True,
     )
     res = execute_search(
         store=store, q=filters.get("q"), alpha=float(filters.get("alpha", 0.5)),

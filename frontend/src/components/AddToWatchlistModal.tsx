@@ -1,3 +1,4 @@
+// Dialog to add a company (ATS + slug) to the watchlist, with live board probing.
 import { useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import type { Company } from '../types'

@@ -188,17 +188,17 @@ def _normalise(
             except (TypeError, ValueError, OSError, OverflowError):
                 posted_date = None
 
-        if since_aware is not None and posted_date is not None:
-            if posted_date < since_aware:
-                return None
+        if (
+            since_aware is not None
+            and posted_date is not None
+            and posted_date < since_aware
+        ):
+            return None
 
         company = (job.get("company_name") or "").strip() or None
         location = (job.get("location") or "").strip() or None
-        description = job.get("description")
-        if description:
-            description = html.unescape(str(description))
-        else:
-            description = None
+        raw_description = job.get("description")
+        description = html.unescape(str(raw_description)) if raw_description else None
 
         result: dict = {
             "title": title,

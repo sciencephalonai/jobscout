@@ -49,8 +49,11 @@ check_key() {
     echo "WARNING: ${key} appears unset/empty in .env — related features may not work." >&2
   fi
 }
-check_key "GOOGLE_API_KEY"
-check_key "DEEPSEEK_API_KEY"
+check_key "GOOGLE_API_KEY"    # REQUIRED: embeddings (no fallback exists)
+# LLM: DeepSeek OR NVIDIA suffices (auto-fallback both directions).
+if ! grep -Eq '^[[:space:]]*(DEEPSEEK_API_KEY|NVIDIA_API_KEY)[[:space:]]*=[[:space:]]*[^[:space:]]' "${REPO_ROOT}/.env"; then
+  echo "WARNING: neither DEEPSEEK_API_KEY nor NVIDIA_API_KEY is set — enrichment/deep-match/resume parsing disabled." >&2
+fi
 check_key "ADZUNA_APP_ID"
 
 # --- Clear stale backend processes to release the DuckDB write lock ---

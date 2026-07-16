@@ -88,7 +88,7 @@
 > orphans created because `company` is part of `job_id`'s hash, so stamping the tenant name minted new
 > records. Added **7 more verified cap-exempt Workday tenants** (Penn State, Ohio State, Cleveland Clinic,
 > Keck/USC, Kansas Health, Roswell Park, + uasys) — prober verified **18/20** (minnstate 422, MGB thin).
-> **Doc accuracy pass:** de-staled `jobscout/CLAUDE.md` — it still claimed "Resume matching NOT yet built",
+> **Doc accuracy pass:** de-staled the project docs — they still claimed "Resume matching NOT yet built",
 > "enrichment is unbuilt", "APScheduler ❌ Not built", "14 adapters / Workday enabled:false", all shipped
 > long ago; now reflects 18 adapters + service layer + APScheduler(off-by-default) + cap-exempt sources +
 > the keyword fix + the concurrency lock. Only LangGraph agentic search remains genuinely unbuilt.
@@ -265,7 +265,7 @@ for any pre-existing job in the Weaviate Cloud index. Fixed with `props.get(key)
 1,000 embeddings/day**. A ~300-job ingest hit the daily cap partway (error:
 `embed_content_free_tier_requests, limit: 1000`). Every ingested job embeds once; a text **search**
 also embeds the query. So: bulk ingest and text search are quota-bound. Mitigations — upgrade the
-Gemini tier, or build the planned local BGE/MiniLM embedding fallback (CLAUDE.md). **Filter-only
+Gemini tier, or build the planned local BGE/MiniLM embedding fallback (roadmap). **Filter-only
 browsing** (`/api/jobs?exp=entry&source=ashby&...` with no `q`) does NOT embed, so the UI works fine
 within quota; only free-text search is blocked once the daily cap is hit.
 

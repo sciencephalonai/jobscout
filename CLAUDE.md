@@ -155,3 +155,35 @@ Relative dates ("3 days ago") are parsed at ingest with `dateparser` and stored 
 2. **Phase 2** — DeepSeek enrichment, resume match endpoint, match % badges
 3. **Phase 3** — Remaining adapters (Greenhouse/Lever/Remotive/Arbeitnow/RSS), APScheduler, source-status dashboard
 4. **Phase 4** — LangGraph agentic search (optional)
+
+
+## Documentation & code style (enforced)
+
+- Every new Python module gets a module docstring; every public function/class a concise,
+  imperative docstring. Comments explain constraints and non-obvious "why" — never restate code.
+- Every new frontend component file starts with a 1-line header comment describing its role.
+- Any new feature or behavior change updates the matching `docs/` page (and its mermaid diagram if
+  the flow changed) IN THE SAME change — docs are part of the definition of done.
+- Plans/roadmaps live in `docs/ROADMAP-CURRENT.md`; update item statuses in the same change that
+  lands the work. Historical plans stay as separate files, never rewritten.
+- Never run git commands (commits/PRs are the owner's action). Keep `PR_DESCRIPTION.md` current so
+  the owner can open a PR at any time.
+- Key matrix (do not regress): GOOGLE_API_KEY required (embeddings, no fallback);
+  DEEPSEEK or NVIDIA for LLM tasks (auto-fallback both directions); everything else optional.
+
+- **Copy & capitalization**: product chrome (nav, buttons, preference cards, modals, settings) uses
+  **sentence case** ("Target roles", "Work preferences"). Cards that render **resume content** mirror
+  document section headings and use **Title Case** ("Achievements & Awards", "Custom Sections") — the
+  data inside them (skill-category names) is Title Case too. Counts always carry a unit and are
+  plural-safe ("1 role" / "3 roles", never "1 roles"). LLM-produced labels are normalized through
+  `resume.prettify_label` before they reach the UI.
+
+- **Text overflow**: every text element picks exactly ONE behavior — never a blanket `truncate`.
+  (1) **Wrap & grow** — primary user-authored content in its home surface (resume section headings,
+  entry titles, bullets, job titles): `min-w-0` + `[overflow-wrap:anywhere]`, no `truncate`, no
+  artificial item cap. Safe because `.workspace-surface` cards have no fixed height. (2) **Truncate
+  only with a reveal** — width-constrained chrome where the full value lives elsewhere: pair
+  `truncate min-w-0` with a `title=` tooltip, the link it points to, or a detail panel. Never
+  truncate without a reveal. (3) **nowrap** — atomic chrome (timestamps, counts, badges), always
+  with `shrink-0`. When a title shares a row with actions, use `items-start` + a `shrink-0` action
+  and let the title group `flex-wrap`, so the title is never squeezed into an ellipsis.

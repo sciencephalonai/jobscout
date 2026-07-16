@@ -4,7 +4,12 @@ with a blank employer."""
 
 from __future__ import annotations
 
-from jobscout.adapters.workday import WorkdayAdapter, parse_workday_url
+from jobscout.adapters.workday import (
+    WorkdayAdapter,
+    parse_workday_job_url,
+    parse_workday_url,
+    workday_location_hint,
+)
 from jobscout.services.source_config import _merge_discovered
 
 
@@ -30,6 +35,34 @@ class TestParseWorkdayUrl:
     def test_garbage_returns_none(self):
         assert parse_workday_url("not a url") is None
         assert parse_workday_url("https://myworkdayjobs.com") is None  # no tenant/region
+
+
+class TestParseWorkdayJobUrl:
+    def test_locale_url_and_apply_suffix(self):
+        assert parse_workday_job_url(
+            "https://nvidia.wd5.myworkdayjobs.com/en-US/NVIDIAExternalCareerSite/"
+            "job/Vietnam-Ho-Chi-Minh-City/System-Software-Engineer_JR1/apply"
+        ) == {
+            "tenant": "nvidia",
+            "region": "wd5",
+            "site": "NVIDIAExternalCareerSite",
+            "external_path": (
+                "/job/Vietnam-Ho-Chi-Minh-City/System-Software-Engineer_JR1"
+            ),
+        }
+
+    def test_canonical_url_without_locale(self):
+        parsed = parse_workday_job_url(
+            "https://nvidia.wd5.myworkdayjobs.com/NVIDIAExternalCareerSite/"
+            "job/Hanoi/ML-Engineer_JR2"
+        )
+        assert parsed and parsed["external_path"] == "/job/Hanoi/ML-Engineer_JR2"
+
+    def test_location_hint(self):
+        assert workday_location_hint(
+            "/job/Vietnam-Ho-Chi-Minh-City/System-Software-Engineer_JR1"
+        ) == "Vietnam Ho Chi Minh City"
+        assert workday_location_hint("/job/Hanoi/ML-Engineer_JR2") == "Hanoi"
 
 
 class TestMergeTenants:

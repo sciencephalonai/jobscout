@@ -12,7 +12,8 @@ from __future__ import annotations
 import jobscout.embed as embed_mod
 import jobscout.services.ingestion_service as ing
 from jobscout.embed import EmbeddingQuotaError
-from jobscout.relational import RelationalStore
+from jobscout.models import UserProfile
+from jobscout.relational import DuckDBRelationalStore
 
 
 class _RecordingStore:
@@ -79,7 +80,7 @@ def test_already_indexed_jobs_are_skipped_no_embed(monkeypatch):
     monkeypatch.setattr(ing, "embed_job", trip_wire)
     _setup(monkeypatch, _FakeAdapter(5))
     store = _ExistingStore()
-    rel = RelationalStore(":memory:")
+    rel = DuckDBRelationalStore(":memory:")
     try:
         ing._run_ingestion(["data"], None, 10, store, rel)  # must NOT raise
         assert store.upserts == []   # nothing re-embedded / re-upserted
@@ -93,12 +94,55 @@ def test_new_jobs_are_embedded(monkeypatch):
     monkeypatch.setattr(ing, "embed_job", lambda *a, **k: (calls.__setitem__("n", calls["n"] + 1) or [0.0] * 8))
     _setup(monkeypatch, _FakeAdapter(3))
     store = _RecordingStore()  # get_by_id → None (all new)
-    rel = RelationalStore(":memory:")
+    rel = DuckDBRelationalStore(":memory:")
     try:
         ing._run_ingestion(["data"], None, 10, store, rel)
         assert len(store.upserts) == 3 and calls["n"] == 3   # all 3 embedded + saved
     finally:
         rel.close()
+
+
+def test_profile_refresh_persists_candidates_for_query_time_ranking(monkeypatch):
+    """A plausible title/category candidate must survive even when incomplete
+    enrichment would make its current verdict Flag rather than Apply."""
+    monkeypatch.setattr(ing, "embed_job", lambda *a, **k: [0.0] * 8)
+    monkeypatch.setattr(ing, "llm_is_configured", lambda: False)
+    _setup(monkeypatch, _FakeAdapter(1))
+    store = _RecordingStore()
+    rel = DuckDBRelationalStore(":memory:")
+    profile = UserProfile(
+        label="junior data profile",
+        target_titles=["data engineer"],
+        seniority_max="junior",
+        yoe_max=2,
+        needs_sponsorship=True,
+        skills=["python", "sql"],
+    )
+    try:
+        ing._run_ingestion(["data engineer"], None, 10, store, rel, profile)
+        assert len(store.upserts) == 1
+        status = rel.get_sources_status()[0]
+        assert status["last_filtered"] == 0
+        assert status["last_ingested"] == 1
+    finally:
+        rel.close()
+
+
+def test_for_you_refill_targets_direct_sources_and_clears_inflight(monkeypatch):
+    captured: list[tuple] = []
+    monkeypatch.setattr(ing, "_run_ingestion", lambda *args: captured.append(args))
+    key = "profile:test:fingerprint"
+    ing._autofetch_inflight.add(key)
+    profile = UserProfile(label="candidate", target_titles=["data engineer"])
+
+    ing._profile_autofetch_and_clear(
+        ["data engineer"], object(), object(), profile, key, 50,  # type: ignore[arg-type]
+    )
+
+    assert captured[0][2] == 50
+    # Refill covers every direct class: ATS boards, government, curated feeds.
+    assert captured[0][-1] == ing.PRIMARY_SOURCES | ing.GOVERNMENT_SOURCES | ing.CURATED_SOURCES
+    assert key not in ing._autofetch_inflight
 
 
 def test_quota_error_stops_run_and_records_reason(monkeypatch):
@@ -109,7 +153,7 @@ def test_quota_error_stops_run_and_records_reason(monkeypatch):
 
     monkeypatch.setattr(ing, "embed_job", boom)
     store = _RecordingStore()
-    rel = RelationalStore(":memory:")
+    rel = DuckDBRelationalStore(":memory:")
     _setup(monkeypatch, _FakeAdapter(3))
     try:
         ing._run_ingestion(["data"], None, 10, store, rel)
@@ -174,7 +218,7 @@ def test_refresh_watchlist_stops_on_quota_without_crashing(monkeypatch):
     monkeypatch.setattr(ing, "_REFRESH_ADAPTER", {"greenhouse": lambda slugs: _FakeAdapter(3)})
 
     store = _RecordingStore()
-    rel = RelationalStore(":memory:")
+    rel = DuckDBRelationalStore(":memory:")
     rel.upsert_company(Company(ats="greenhouse", slug="acme", name="Acme", enabled=True))
     try:
         result = ing._refresh_watchlist(store, rel, 800, ["data"])
@@ -194,7 +238,7 @@ def test_run_stops_at_embed_budget(monkeypatch):
     monkeypatch.setattr(ing, "embed_job", fake_embed)
     monkeypatch.setattr(ing.settings, "embed_daily_budget", 2)
     store = _RecordingStore()
-    rel = RelationalStore(":memory:")
+    rel = DuckDBRelationalStore(":memory:")
     _setup(monkeypatch, _FakeAdapter(5))
     try:
         ing._run_ingestion(["data"], None, 10, store, rel)

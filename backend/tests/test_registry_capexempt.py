@@ -4,9 +4,12 @@
 from __future__ import annotations
 
 from jobscout.models import Company
-from jobscout.relational import RelationalStore
+from jobscout.relational import DuckDBRelationalStore
 from jobscout.services.ingestion_service import _REFRESH_ADAPTER
-from jobscout.services.registry import register_cap_exempt_companies
+from jobscout.services.registry import (
+    register_cap_exempt_companies,
+    register_configured_companies,
+)
 
 _CFG = {
     "sources": {
@@ -24,7 +27,7 @@ _CFG = {
 
 
 def test_sync_creates_capexempt_rows_only():
-    r = RelationalStore(":memory:")
+    r = DuckDBRelationalStore(":memory:")
     try:
         n = register_cap_exempt_companies(r, _CFG)
         assert n == 3  # mozilla, braven, umd (NOT stripe)
@@ -40,7 +43,7 @@ def test_sync_creates_capexempt_rows_only():
 
 
 def test_workday_row_keeps_region_site_name():
-    r = RelationalStore(":memory:")
+    r = DuckDBRelationalStore(":memory:")
     try:
         register_cap_exempt_companies(r, _CFG)
         umd = r.get_company("workday", "umd")
@@ -53,7 +56,7 @@ def test_workday_row_keeps_region_site_name():
 
 
 def test_idempotent():
-    r = RelationalStore(":memory:")
+    r = DuckDBRelationalStore(":memory:")
     try:
         register_cap_exempt_companies(r, _CFG)
         register_cap_exempt_companies(r, _CFG)  # again
@@ -65,16 +68,62 @@ def test_idempotent():
 
 def test_refresh_adapter_covers_workday_and_workable():
     # "Get companies" can now build these adapters for cap-exempt refresh.
-    for ats in ("greenhouse", "lever", "ashby", "workable", "workday"):
+    for ats in (
+        "greenhouse", "lever", "ashby", "workable", "workday", "recruitee",
+        "smartrecruiters",
+    ):
         assert ats in _REFRESH_ADAPTER
 
 
 def test_region_site_roundtrip_upsert():
-    r = RelationalStore(":memory:")
+    r = DuckDBRelationalStore(":memory:")
     try:
         r.upsert_company(Company(ats="workday", slug="cornell", name="Cornell University",
                                  employer_type="university", region="wd1", site="cornellCareerPage"))
         c = r.get_company("workday", "cornell")
         assert c is not None and c.region == "wd1" and c.site == "cornellCareerPage"
+    finally:
+        r.close()
+
+
+def test_configured_registry_includes_for_profit_sources_and_direct_targets():
+    cfg = {
+        "sources": {
+            "greenhouse": {"companies": [
+                {"token": "stripe", "display_name": "Stripe"},
+            ]},
+            "smartrecruiters": {"companies": [
+                {"token": "NBCUniversal3", "type": "for_profit"},
+            ]},
+            "workday": {"tenants": [
+                {"tenant": "abbott", "region": "wd5", "site": "abbottcareers",
+                 "type": "for_profit", "name": "Abbott"},
+            ]},
+        },
+        "company_targets": [
+            {
+                "ats": "none", "slug": "marquette-university",
+                "name": "Marquette University", "employer_type": "university",
+                "careers_url": "https://employment.marquette.edu/",
+                "enabled": False, "direct_apply_only": True,
+            },
+            {
+                "ats": "greenhouse", "slug": "stripe", "name": "Stripe, Inc.",
+                "careers_url": "https://job-boards.greenhouse.io/stripe",
+                "tier": "Mid-Size Tech",
+            },
+        ],
+    }
+    r = DuckDBRelationalStore(":memory:")
+    try:
+        count = register_configured_companies(r, cfg)
+        assert count == 4
+        assert r.get_company("greenhouse", "stripe").name == "Stripe, Inc."
+        assert r.get_company("smartrecruiters", "NBCUniversal3") is not None
+        abbott = r.get_company("workday", "abbott")
+        assert abbott is not None and abbott.region == "wd5"
+        marquette = r.get_company("none", "marquette-university")
+        assert marquette is not None and marquette.direct_apply_only is True
+        assert marquette.enabled is False
     finally:
         r.close()
