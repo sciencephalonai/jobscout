@@ -26,7 +26,7 @@ from fastapi import (
 )
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 
 from jobscout import security as security_guards
 from jobscout.api.admin import router as admin_router
@@ -48,6 +48,7 @@ from jobscout.models import (
     Company,
     Job,
     JobsResponse,
+    PipelineAnalytics,
     ResumeRecord,
     RunLog,
     SavedSearch,
@@ -103,6 +104,7 @@ from jobscout.services.source_config import (
     _enabled_source_names,
     _load_sources_cfg,
 )
+from jobscout.source_intelligence import source_kind
 from jobscout.store import COLLECTION_NAME, WeaviateStore
 from jobscout.tailor import (
     EligibilityError,
@@ -115,6 +117,24 @@ from jobscout.verdict import match_key, priority_key
 from jobscout.verdict import score as score_verdict
 
 log = logging.getLogger(__name__)
+
+
+def _serve_file(path: Path, *, media_type: str, filename: str) -> Response:
+    """Download a stored file through the blob seam.
+
+    Local backend → zero-copy ``FileResponse`` from disk; a remote backend
+    (Supabase Storage) → streamed bytes with a download filename. Works for both
+    without the routes knowing which backend is active.
+    """
+    local = blob_store.local_path(path)
+    if local is not None:
+        return FileResponse(local, media_type=media_type, filename=filename)
+    return Response(
+        content=blob_store.read(path),
+        media_type=media_type,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
 
 # A sparse/stale For You request may automatically refill the shared index for
 # that profile. Bound it to one run per profile-evidence fingerprint every six
@@ -1223,8 +1243,8 @@ async def get_profile(profile_id: str, request: Request) -> UserProfile:
 
 
 @app.get("/api/profiles/{profile_id}/resume", tags=["profiles"])
-async def download_original_resume(profile_id: str, request: Request) -> FileResponse:
-    """Return the locally stored original upload, separate from editable text."""
+async def download_original_resume(profile_id: str, request: Request) -> Response:
+    """Return the stored original upload, separate from editable text."""
     relational: RelationalStore = request.app.state.relational_store
     profile = relational.get_profile(profile_id)
     if profile is None:
@@ -1232,9 +1252,9 @@ async def download_original_resume(profile_id: str, request: Request) -> FileRes
     if not profile.resume_filename:
         raise HTTPException(status_code=404, detail="This profile has no original resume file.")
     path = resume_file_path(profile.id, profile.resume_filename)
-    if not path.exists():
-        raise HTTPException(status_code=404, detail="The local original resume file is unavailable.")
-    return FileResponse(
+    if not blob_store.exists(path):
+        raise HTTPException(status_code=404, detail="The original resume file is unavailable.")
+    return _serve_file(
         path,
         media_type=profile.resume_content_type or "application/octet-stream",
         filename=profile.resume_filename,
@@ -1438,21 +1458,21 @@ async def rename_profile_resume(
 @app.get("/api/profiles/{profile_id}/resumes/{resume_id}/file", tags=["profiles"])
 async def download_profile_resume(
     profile_id: str, resume_id: str, request: Request
-) -> FileResponse:
+) -> Response:
     """Download one library resume's original file."""
     relational: RelationalStore = request.app.state.relational_store
     record = relational.get_resume(resume_id)
     if record is None or record.profile_id != profile_id:
         raise HTTPException(status_code=404, detail="Resume not found for this profile.")
     path = Path(settings.resume_storage_dir) / record.file_path
-    if not path.is_file():
-        raise HTTPException(status_code=404, detail="The local resume file is unavailable.")
+    if not blob_store.exists(path):
+        raise HTTPException(status_code=404, detail="The resume file is unavailable.")
     # A display rename may have dropped the extension ("Marriott SWE") — restore
     # the real suffix from the stored file so the download opens correctly.
     download_name = record.filename
     if not Path(download_name).suffix and path.suffix:
         download_name = f"{download_name}{path.suffix}"
-    return FileResponse(
+    return _serve_file(
         path,
         media_type=record.content_type or "application/octet-stream",
         filename=download_name,
@@ -1836,6 +1856,7 @@ async def tailor_profile_resume(
     except TailoringError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
+    metrics = result.metrics or {}
     # Catalog the build so it stays findable/downloadable after this response.
     relational.upsert_tailored(TailoredResumeRecord(
         profile_id=profile_id,
@@ -1845,8 +1866,13 @@ async def tailor_profile_resume(
         filename=result.filename,
         recommendation="skip" if should_skip else "build",
         fingerprint=deep_match_fingerprint(job, profile),
+        engine=result.engine,
+        pdf_filename=result.pdf_path.name if result.pdf_path else "",
+        metrics_json=json.dumps(metrics) if metrics else "",
+        ai_risk_after=metrics.get("ai_risk_after"),
     ))
     record_usage(relational, current_user_id(request), "tailor")
+    has_pdf = result.pdf_path is not None
     return {
         "built": True,
         "gate": gate,
@@ -1855,7 +1881,10 @@ async def tailor_profile_resume(
         "warnings": result.warnings,
         "provider": result.provider,
         "model": result.model,
+        "engine": result.engine,
+        "metrics": metrics,
         "download_url": f"/api/profiles/{profile_id}/tailored/{job_id}",
+        "pdf_download_url": f"/api/profiles/{profile_id}/tailored/{job_id}/pdf" if has_pdf else None,
     }
 
 
@@ -1919,13 +1948,13 @@ async def rename_tailored_resume(
 @app.get("/api/profiles/{profile_id}/tailored/{job_id}", tags=["profiles"])
 async def download_tailored_resume(
     profile_id: str, job_id: str, request: Request
-) -> FileResponse:
+) -> Response:
     """Download a locally retained tailored DOCX only when its profile still exists."""
     relational: RelationalStore = request.app.state.relational_store
     if relational.get_profile(profile_id) is None:
         raise HTTPException(status_code=404, detail="Profile not found.")
     path = tailored_resume_path(profile_id, job_id)
-    if not path.is_file():
+    if not blob_store.exists(path):
         raise HTTPException(status_code=404, detail="No tailored resume exists for this job yet.")
     record = next((r for r in relational.list_tailored(profile_id) if r.job_id == job_id), None)
     # The STORED name is the source of truth (the user can rename it). Only fall
@@ -1938,11 +1967,100 @@ async def download_tailored_resume(
         # A dated fallback so re-downloads of different jobs don't collide in ~/Downloads.
         if record is not None and base.lower().endswith(".docx"):
             base = f"{base[:-5]}_{record.created_at:%Y-%m-%d}.docx"
-    return FileResponse(
+    return _serve_file(
         path,
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         filename=base,
     )
+
+
+@app.get("/api/profiles/{profile_id}/tailored/{job_id}/pdf", tags=["profiles"])
+async def download_tailored_pdf(
+    profile_id: str, job_id: str, request: Request
+) -> Response:
+    """Download the LaTeX-engine PDF for a tailored resume (if one was built)."""
+    relational: RelationalStore = request.app.state.relational_store
+    if relational.get_profile(profile_id) is None:
+        raise HTTPException(status_code=404, detail="Profile not found.")
+    pdf_path = tailored_resume_path(profile_id, job_id).with_suffix(".pdf")
+    if not blob_store.exists(pdf_path):
+        raise HTTPException(status_code=404, detail="No tailored PDF exists for this job.")
+    record = relational.get_tailored(profile_id, job_id)
+    base = (record.pdf_filename if record and record.pdf_filename
+            else (record.filename[:-5] + ".pdf" if record and record.filename.endswith(".docx")
+                  else pdf_path.name))
+    return _serve_file(pdf_path, media_type="application/pdf", filename=base)
+
+
+@app.get("/api/profiles/{profile_id}/tailored/{job_id}/metrics", tags=["profiles"])
+async def get_tailored_metrics(
+    profile_id: str, job_id: str, request: Request
+) -> dict[str, Any]:
+    """Return the AI-reduction metric bundle for one tailored resume (per-job dashboard)."""
+    relational: RelationalStore = request.app.state.relational_store
+    if relational.get_profile(profile_id) is None:
+        raise HTTPException(status_code=404, detail="Profile not found.")
+    record = relational.get_tailored(profile_id, job_id)
+    if record is None or not record.metrics_json:
+        raise HTTPException(status_code=404, detail="No metrics for this tailored resume.")
+    return {
+        "job_id": job_id,
+        "engine": record.engine,
+        "filename": record.filename,
+        "warnings": [],
+        "metrics": json.loads(record.metrics_json),
+    }
+
+
+@app.get("/api/profiles/{profile_id}/dashboard", tags=["profiles"])
+async def candidate_dashboard(profile_id: str, request: Request) -> dict[str, Any]:
+    """Per-candidate dashboard: profile summary + tailored resumes + pipeline funnel."""
+    relational: RelationalStore = request.app.state.relational_store
+    profile = relational.get_profile(profile_id)
+    if profile is None:
+        raise HTTPException(status_code=404, detail="Profile not found.")
+    store: WeaviateStore = request.app.state.weaviate_store
+
+    tailored: list[dict[str, Any]] = []
+    for r in relational.list_tailored(profile_id):
+        up_to_date = True
+        job = store.get_by_id(r.job_id) if r.fingerprint else None
+        if r.fingerprint and job is not None:
+            up_to_date = deep_match_fingerprint(job, profile) == r.fingerprint
+        has_pdf = tailored_resume_path(profile_id, r.job_id).with_suffix(".pdf").is_file()
+        tailored.append({
+            "job_id": r.job_id,
+            "company": r.company,
+            "title": r.title,
+            "filename": r.filename,
+            "engine": r.engine,
+            "ai_risk_after": r.ai_risk_after,
+            "recommendation": r.recommendation,
+            "up_to_date": up_to_date,
+            "created_at": r.created_at.isoformat(),
+            "download_url": f"/api/profiles/{profile_id}/tailored/{r.job_id}",
+            "pdf_download_url": (f"/api/profiles/{profile_id}/tailored/{r.job_id}/pdf"
+                                 if has_pdf else None),
+            "has_metrics": bool(r.metrics_json),
+        })
+
+    entries: list[dict[str, Any]] = []
+    for row in relational.list_pipeline(profile_id):
+        job = store.get_by_id(row["job_id"])
+        source = job.source if job is not None else None
+        entries.append({"status": row["status"], "source": source,
+                        "source_kind": source_kind(source)})
+
+    return {
+        "profile": {
+            "id": profile.id,
+            "label": profile.label,
+            "target_titles": profile.target_titles,
+            "has_resume": bool((profile.resume_text or "").strip()),
+        },
+        "tailored": tailored,
+        "pipeline": PipelineAnalytics.from_entries(entries).model_dump(),
+    }
 
 
 def _delete_profile_and_files(relational: RelationalStore, profile_id: str) -> None:
@@ -2048,22 +2166,33 @@ async def set_job_state(
 async def get_pipeline(profile_id: str, request: Request) -> dict[str, Any]:
     """Return the profile's application pipeline (applied→oa→interview→offer→rejected).
 
-    Shape: ``{jobs: [...], stages: {job_id: {stage, note, updated_at}}}``. The
-    frontend groups jobs by stage. Newest activity first."""
+    Shape: ``{jobs: [...], stages: {job_id: {stage, note, updated_at}}, analytics}``.
+    The frontend groups jobs by stage and renders the funnel rollup. Newest
+    activity first. ``analytics`` is computed over the pipeline rows even for jobs
+    that have since dropped out of the index, so the funnel stays complete."""
     relational: RelationalStore = request.app.state.relational_store
     if relational.get_profile(profile_id) is None:
         raise HTTPException(status_code=404, detail=f"Profile '{profile_id}' not found.")
     store: WeaviateStore = request.app.state.weaviate_store
     jobs: list[dict[str, Any]] = []
     stages: dict[str, Any] = {}
+    entries: list[dict[str, Any]] = []
     for row in relational.list_pipeline(profile_id):
         job = store.get_by_id(row["job_id"])
+        # The job may have aged out of the index; still count it in the funnel.
+        source = job.source if job is not None else None
+        entries.append({
+            "status": row["status"],
+            "source": source,
+            "source_kind": source_kind(source),
+        })
         if job is None:
             continue
         jobs.append(job.model_dump())
         stages[job.job_id] = {"stage": row["status"], "note": row["note"],
                               "updated_at": str(row["updated_at"])}
-    return {"jobs": jobs, "stages": stages}
+    analytics = PipelineAnalytics.from_entries(entries)
+    return {"jobs": jobs, "stages": stages, "analytics": analytics.model_dump()}
 
 
 @app.post("/api/search/run", response_model=list[RunLog], tags=["ingestion"])

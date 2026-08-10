@@ -17,6 +17,9 @@ plan in [`docs/ROADMAP-CURRENT.md`](docs/ROADMAP-CURRENT.md), the hosting path i
 [`docs/pre-deployment-checklist.md`](docs/pre-deployment-checklist.md), and dev standards in
 [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
+**Hosting (optional):** Auth0 login + Supabase (Postgres + Storage) are wired and env-gated — unset,
+JobScout runs as a single local user on DuckDB + local files. Setup: [`docs/auth-and-hosting.md`](docs/auth-and-hosting.md).
+
 ---
 
 ## What it does (at a glance)

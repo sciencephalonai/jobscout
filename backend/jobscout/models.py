@@ -400,6 +400,13 @@ class TailoredResumeRecord(BaseModel):
     # Fingerprint of the profile+resume+job at build time — lets the UI tell
     # "up to date" from "your resume changed since, re-tailor" (empty = legacy).
     fingerprint: str = ""
+    # Which generator built it: "latex" (PDF+DOCX+metrics) or "node" (DOCX only).
+    engine: str = "node"
+    pdf_filename: str = ""                       # sibling PDF's human name ("" = none)
+    # Serialized AI-reduction metric bundle {before, after, delta, ai_risk_*}.
+    metrics_json: str = ""
+    # Denormalized after-tailoring AI-risk score (0–100) for cheap dashboard sort.
+    ai_risk_after: float | None = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
@@ -539,6 +546,98 @@ class JobsResponse(BaseModel):
     # True while a sparse/stale For You feed is automatically searching enabled
     # sources for newer profile-targeted candidates.
     recommendation_refreshing: bool = False
+
+
+# The ordered application pipeline. ``rejected`` is terminal and its depth is
+# unknown (single-status model — see ``PipelineAnalytics``), so it sits outside
+# the linear order used for "reached this stage" rollups.
+PIPELINE_STAGES: tuple[str, ...] = ("applied", "oa", "interview", "offer", "rejected")
+
+
+class PipelineSourceStat(BaseModel):
+    """Per-source funnel slice: how a given provenance is converting."""
+
+    source: str
+    source_kind: Literal["primary", "government", "curated", "aggregator", "scraper"]
+    applications: int
+    responded: int          # moved past ``applied`` (a rejection is also a response)
+    offers: int
+
+
+class PipelineAnalytics(BaseModel):
+    """Funnel rollup over a profile's application pipeline (ApplyRyt-style stats).
+
+    Computed from ``user_job_state``: each pipeline row is one submitted
+    application whose *current* status is one of :data:`PIPELINE_STAGES`.
+
+    Caveat (documented, not a bug): the store keeps only the latest status per
+    ``(profile, job)``, with no stage history. A job rejected *after* an
+    interview now reads as ``rejected``, so the "reached screening/interview"
+    rates count only jobs *currently* at or past that stage and therefore
+    *understate* true reach. ``response_rate`` is exact — any status other than
+    ``applied`` means the employer engaged.
+    """
+
+    total_applications: int
+    by_stage: dict[str, int]        # every stage present, zero-filled
+    responded: int
+    response_rate: float            # 0–1: fraction past ``applied``
+    screening_rate: float           # 0–1: currently at oa/interview/offer
+    interview_rate: float           # 0–1: currently at interview/offer
+    offer_rate: float               # 0–1: currently at offer
+    by_source: list[PipelineSourceStat]
+
+    @classmethod
+    def from_entries(cls, entries: list[dict[str, Any]]) -> PipelineAnalytics:
+        """Build the rollup from pipeline entries.
+
+        Each entry is ``{"status": <stage>, "source": <adapter>,
+        "source_kind": <kind>}``. Entries with an unknown status are ignored so a
+        stray triage row can never inflate the funnel.
+        """
+        valid = [e for e in entries if e.get("status") in PIPELINE_STAGES]
+        total = len(valid)
+        by_stage = {stage: 0 for stage in PIPELINE_STAGES}
+        for e in valid:
+            by_stage[e["status"]] += 1
+
+        responded = total - by_stage["applied"]
+        screening = by_stage["oa"] + by_stage["interview"] + by_stage["offer"]
+        interviewing = by_stage["interview"] + by_stage["offer"]
+        offers = by_stage["offer"]
+
+        def rate(n: int) -> float:
+            return round(n / total, 4) if total else 0.0
+
+        # Per-source slices, keyed by the authoritative adapter name.
+        buckets: dict[str, dict[str, Any]] = {}
+        for e in valid:
+            src = e.get("source") or "unknown"
+            b = buckets.setdefault(
+                src,
+                {"source_kind": e.get("source_kind", "aggregator"),
+                 "applications": 0, "responded": 0, "offers": 0},
+            )
+            b["applications"] += 1
+            if e["status"] != "applied":
+                b["responded"] += 1
+            if e["status"] == "offer":
+                b["offers"] += 1
+        by_source = sorted(
+            (PipelineSourceStat(source=src, **vals) for src, vals in buckets.items()),
+            key=lambda s: (-s.applications, s.source),
+        )
+
+        return cls(
+            total_applications=total,
+            by_stage=by_stage,
+            responded=responded,
+            response_rate=rate(responded),
+            screening_rate=rate(screening),
+            interview_rate=rate(interviewing),
+            offer_rate=rate(offers),
+            by_source=by_source,
+        )
 
 
 # ─── Operational / monitoring models ─────────────────────────────────────────

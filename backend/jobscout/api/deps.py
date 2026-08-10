@@ -13,22 +13,70 @@ notes (per-user quota, Postgres over embedded DuckDB).
 
 from __future__ import annotations
 
-from fastapi import HTTPException, Request
+from uuid import uuid4
 
+from fastapi import HTTPException, Request, status
+
+from jobscout.auth.auth0 import bearer_token, claim_email, claim_name, verify_token
 from jobscout.config import settings
 from jobscout.models import UserProfile
 from jobscout.relational import RelationalStore
 
 
-def current_user_id(request: Request) -> str:  # noqa: ARG001
-    """Who is calling. TODAY: always the single local user.
+def current_user_id(request: Request) -> str:
+    """Who is calling — THE ENTIRE AUTH INTEGRATION POINT.
 
-    THIS IS THE ENTIRE AUTH INTEGRATION POINT. To host multiple users, replace
-    this body with a real identity lookup (e.g. read a signed session cookie or
-    verify a Bearer JWT off ``request`` and return that user's id). Every private
-    route already routes ownership through here, so nothing else needs to change.
+    - No Auth0 configured → the single local user (dev/local behavior, unchanged).
+    - Auth0 configured + a valid ``Bearer`` token → the matching account's id
+      (resolved/auto-provisioned from the token's ``sub``/``email``).
+    - Auth0 configured, no/invalid token → the local user, unless
+      ``settings.require_auth`` is on (then 401).
+
+    Every private route routes ownership through here, so wiring auth changes
+    nothing else. See docs/auth-and-hosting.md.
     """
-    return settings.local_user_id
+    if not settings.auth0_configured:
+        return settings.local_user_id
+
+    token = bearer_token(request)
+    if token is None:
+        if settings.require_auth:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Authentication required",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        return settings.local_user_id
+
+    claims = verify_token(token)  # raises 401 if the token is invalid/expired
+    return _resolve_user_id(request, claims)
+
+
+def _resolve_user_id(request: Request, claims: dict) -> str:
+    """Map verified Auth0 claims to a JobScout account id, provisioning on first login.
+
+    Order: (1) existing ``auth_subject`` match, (2) email match → link the subject,
+    (3) create a new account. Keeps one account per Auth0 identity.
+    """
+    relational: RelationalStore = request.app.state.relational_store
+    subject = str(claims.get("sub") or "")
+    email = claim_email(claims)
+
+    existing = relational.get_user_by_subject("auth0", subject)
+    if existing:
+        return str(existing["id"])
+    if email:
+        by_email = relational.get_user_by_email(email)
+        if by_email:
+            relational.link_user_subject(str(by_email["id"]), "auth0", subject)
+            return str(by_email["id"])
+    new_id = str(uuid4())
+    display = claim_name(claims) or (email.split("@")[0] if email else "User")
+    relational.create_auth_user(
+        user_id=new_id, email=email, display_name=display,
+        auth_provider="auth0", auth_subject=subject,
+    )
+    return new_id
 
 
 def effective_owner(profile: UserProfile) -> str:

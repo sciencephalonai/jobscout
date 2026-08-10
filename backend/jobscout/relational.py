@@ -59,6 +59,11 @@ class RelationalStore(Protocol):
     def ensure_local_user(self) -> None: ...
     def list_users(self) -> list[dict[str, Any]]: ...
     def get_user(self, user_id: str) -> dict[str, Any] | None: ...
+    def get_user_by_subject(self, auth_provider: str, auth_subject: str) -> dict[str, Any] | None: ...
+    def get_user_by_email(self, email: str) -> dict[str, Any] | None: ...
+    def create_auth_user(self, *, user_id: str, email: str | None, display_name: str | None,
+                         auth_provider: str, auth_subject: str) -> dict[str, Any]: ...
+    def link_user_subject(self, user_id: str, auth_provider: str, auth_subject: str) -> None: ...
     def update_user(
         self, user_id: str, *, plan: str | None = None,
         limits_json: str | None = None, is_admin: bool | None = None,
@@ -80,6 +85,7 @@ class RelationalStore(Protocol):
     # Tailored catalog
     def upsert_tailored(self, record: TailoredResumeRecord) -> TailoredResumeRecord: ...
     def list_tailored(self, profile_id: str) -> list[TailoredResumeRecord]: ...
+    def get_tailored(self, profile_id: str, job_id: str) -> TailoredResumeRecord | None: ...
     # Deep-match cache
     def get_deep_match(
         self, job_id: str, profile_id: str, fingerprint: str
@@ -403,6 +409,44 @@ class DuckDBRelationalStore:
             f"SELECT {self._USER_COLS} FROM users WHERE id = ?", [user_id]
         ).fetchone()
         return self._user_row_to_dict(row) if row else None
+
+    def get_user_by_subject(self, auth_provider: str, auth_subject: str) -> dict[str, Any] | None:
+        """One account by identity-provider subject (the primary Auth0 lookup)."""
+        row = self._conn.execute(
+            f"SELECT {self._USER_COLS} FROM users WHERE auth_provider = ? AND auth_subject = ?",
+            [auth_provider, auth_subject],
+        ).fetchone()
+        return self._user_row_to_dict(row) if row else None
+
+    def get_user_by_email(self, email: str) -> dict[str, Any] | None:
+        """One account by email (case-insensitive) — used to auto-link on first login."""
+        row = self._conn.execute(
+            f"SELECT {self._USER_COLS} FROM users WHERE lower(email) = lower(?)", [email]
+        ).fetchone()
+        return self._user_row_to_dict(row) if row else None
+
+    def create_auth_user(self, *, user_id: str, email: str | None, display_name: str | None,
+                         auth_provider: str, auth_subject: str) -> dict[str, Any]:
+        """Provision a new account for an external identity (first login)."""
+        self._conn.execute(
+            """
+            INSERT INTO users (id, email, display_name, auth_provider, auth_subject,
+                               plan, is_admin, created_at)
+            VALUES (?, ?, ?, ?, ?, 'free', FALSE, ?)
+            ON CONFLICT (id) DO NOTHING
+            """,
+            [user_id, email, display_name, auth_provider, auth_subject, datetime.now(UTC)],
+        )
+        user = self.get_user(user_id)
+        assert user is not None  # just inserted
+        return user
+
+    def link_user_subject(self, user_id: str, auth_provider: str, auth_subject: str) -> None:
+        """Attach an identity-provider subject to an existing (email-matched) account."""
+        self._conn.execute(
+            "UPDATE users SET auth_provider = ?, auth_subject = ? WHERE id = ?",
+            [auth_provider, auth_subject, user_id],
+        )
 
     def update_user(
         self, user_id: str, *, plan: str | None = None,
@@ -812,6 +856,14 @@ class DuckDBRelationalStore:
         ).fetchall()
         return [TailoredResumeRecord.model_validate_json(r[0]) for r in rows]
 
+    def get_tailored(self, profile_id: str, job_id: str) -> TailoredResumeRecord | None:
+        """Return the tailored-resume record for one (profile, job), or None."""
+        row = self._conn.execute(
+            "SELECT data FROM tailored_resumes WHERE profile_id = ? AND job_id = ?",
+            [profile_id, job_id],
+        ).fetchone()
+        return TailoredResumeRecord.model_validate_json(row[0]) if row else None
+
     # ------------------------------------------------------------------
     # Deep-match result persistence (never re-bill the same job+profile)
     # ------------------------------------------------------------------
@@ -1097,12 +1149,20 @@ class DuckDBRelationalStore:
 def make_relational_store(db_path: str | None = None) -> RelationalStore:
     """Construct the relational store for the configured backend (DB seam).
 
-    Today only ``duckdb`` exists. A future Postgres backend is a new branch here +
-    a ``PostgresRelationalStore`` implementing the :class:`RelationalStore` Protocol;
-    callers never change because they depend on the Protocol, not the concrete class.
+    Postgres (Supabase) is used whenever a DSN is configured (DATABASE_URL /
+    SUPABASE_DB_URL), or when ``relational_backend`` forces it; DuckDB is the
+    local/test fallback. Callers depend on the Protocol, not the concrete class,
+    so nothing else changes. See ``relational_postgres.PostgresRelationalStore``.
     """
+    dsn = settings.effective_database_url
     backend = settings.relational_backend
-    if backend == "duckdb":
+    if backend == "postgres" or (backend in ("duckdb", "auto", "") and dsn):
+        from jobscout.relational_postgres import PostgresRelationalStore
+
+        if not dsn:
+            raise ValueError("relational_backend=postgres but no DATABASE_URL/SUPABASE_DB_URL set.")
+        return PostgresRelationalStore(dsn)
+    if backend in ("duckdb", "auto", ""):
         return DuckDBRelationalStore(db_path or settings.relational_db_path)
     raise ValueError(f"Unknown relational_backend: {backend!r}")
 

@@ -108,14 +108,34 @@ Use the filter pills:
 - Click **Apply ↗** (opens the posting + marks it applied) or **Mark applied** in Shortlist → they move
   to the **Applied** tab and leave the main list.
 - The **Applied** tab is your application tracker (replaces a manual spreadsheet / `applied_jobs.md`).
+- **Pipeline stats** sit above the tracker: total applications, response rate, interview rate, offer
+  rate, and a per-source breakdown flagged **Direct** vs **Discovery** — so you can see which sources
+  actually convert. Rates come straight from the stages you set (applied → OA → interview → offer →
+  rejected); no data leaves the machine. Because only the latest stage per job is stored, "reached
+  screening/interview" counts jobs *currently* at that stage — a job rejected after an interview reads
+  as rejected — so those rates are a conservative floor. Response rate (anything past *applied*) is exact.
 
-### Tailor an audited DOCX
+### Tailor a resume (PDF + DOCX) with an AI-reduction dashboard
 
-With an active profile, open a job and choose **Tailor DOCX**. JobScout first applies the resume-writing
-eligibility gate (US role, no citizenship/clearance/ITAR wall, no explicit no-sponsorship role, and not a
-5+ year role). Only then does the selected chat provider choose verified canonical experience/project
-variants. The local resume-writing toolkit builds and audits the resulting DOCX before the download link
-appears. It does not invent metrics, skills, or experience; reach-role and contract warnings remain visible.
+With an active profile, open a job and choose **Tailor**. JobScout first applies the eligibility gate
+(US role, no citizenship/clearance/ITAR wall, no explicit no-sponsorship role, and not a 5+ year role).
+Only then does the selected chat provider write a job-tailored resume **from your own resume's facts** —
+it may reorder and reword, but never invents employers, titles, dates, degrees, or metrics. The default
+**LaTeX engine** builds both a **PDF and a DOCX**, runs a warn-only fabrication audit (anything it can't
+ground in your resume is flagged for you to confirm), and scores the result.
+
+An **AI-reduction dashboard** then appears under the job: before→after **humanization** rings (100 minus a
+composite AI-detection risk score) and the metrics tailoring moved most — sentence burstiness, lexical
+diversity, buzzword density, and so on. The goal is a resume that reads human, not machine-generated.
+
+> The engine needs `xelatex` + `pandoc` installed (see configuration.md). Set `TAILOR_ENGINE=node` to use
+> the legacy DOCX-only path instead.
+
+### Your dashboard (Profile → Dashboard)
+
+The Profile tab's **Dashboard** card rolls a candidate up in one place: the **application funnel**
+(applications, response/interview/offer rates), and **every tailored resume** with its humanization score
+and PDF/DOCX links, sorted so the most human-reading resumes are on top.
 
 ### Keep several resumes (Profile → Resumes)
 

@@ -65,10 +65,33 @@ export function buildQueryString(filters: JobFilters): string {
   return qs ? `?${qs}` : ''
 }
 
+// Auth token injection. In local mode (no Auth0) this stays null and apiFetch
+// sends no Authorization header — identical to before. AuthGate wires a getter
+// (Auth0's getAccessTokenSilently) once the user is authenticated.
+let authTokenGetter: (() => Promise<string | null>) | null = null
+export function setAuthTokenGetter(fn: (() => Promise<string | null>) | null): void {
+  authTokenGetter = fn
+}
+
+async function authHeader(): Promise<Record<string, string>> {
+  if (!authTokenGetter) return {}
+  try {
+    const token = await authTokenGetter()
+    return token ? { Authorization: `Bearer ${token}` } : {}
+  } catch {
+    return {}
+  }
+}
+
 async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
+  const auth = await authHeader()
   const res = await fetch(path, {
-    headers: { 'Content-Type': 'application/json' },
     ...options,
+    headers: {
+      'Content-Type': 'application/json',
+      ...auth,
+      ...(options?.headers as Record<string, string> | undefined),
+    },
   })
   if (!res.ok) {
     const text = await res.text().catch(() => res.statusText)
@@ -585,6 +608,25 @@ export interface TailoredRow {
   up_to_date: boolean
   created_at: string
   download_url: string
+}
+
+/** AI-reduction metrics for one tailored resume (per-job dashboard). */
+export function useTailoredMetrics(profileId: string | null, jobId: string | null, enabled: boolean) {
+  return useQuery<import('../types').TailoredMetricsResponse, Error>({
+    queryKey: ['tailored-metrics', profileId, jobId],
+    queryFn: () => apiFetch(`/api/profiles/${profileId}/tailored/${jobId}/metrics`),
+    enabled: !!profileId && !!jobId && enabled,
+    retry: false,
+  })
+}
+
+/** Per-candidate dashboard: profile summary + tailored resumes + pipeline funnel. */
+export function useCandidateDashboard(profileId: string | null) {
+  return useQuery<import('../types').CandidateDashboardResponse, Error>({
+    queryKey: ['candidate-dashboard', profileId],
+    queryFn: () => apiFetch(`/api/profiles/${profileId}/dashboard`),
+    enabled: !!profileId,
+  })
 }
 
 export function useTailoredResumes(profileId: string | null) {

@@ -19,6 +19,8 @@ import shutil
 from pathlib import Path
 from typing import Protocol
 
+import httpx
+
 from jobscout.config import settings
 
 
@@ -63,16 +65,80 @@ class LocalBlobStore:
             shutil.rmtree(directory, ignore_errors=True)
 
 
-def make_blob_store() -> BlobStore:
-    """Construct the file-storage backend selected by ``settings.blob_backend``.
+class SupabaseBlobStore:
+    """Supabase Storage :class:`BlobStore` — files live in a hosted bucket.
 
-    Only ``local`` exists today; an ``s3``/``gcs`` backend is a future drop-in that
-    implements :class:`BlobStore` — callers never change. See docs/multi-tenancy.md.
+    A key is the repo-relative path used as the object name (e.g.
+    ``data/resumes/<pid>/<rid>.pdf``). ``local_path`` returns ``None`` — files are
+    remote, so download routes stream ``read()`` bytes instead of ``FileResponse``.
+    Uses the service-role key server-side (never exposed to the browser).
     """
-    backend = settings.blob_backend
-    if backend == "local":
+
+    def __init__(self, url: str, service_key: str, bucket: str,
+                 client: httpx.Client | None = None) -> None:
+        self._bucket = bucket
+        self._client = client or httpx.Client(
+            base_url=f"{url.rstrip('/')}/storage/v1",
+            headers={"Authorization": f"Bearer {service_key}", "apikey": service_key},
+            timeout=30.0,
+        )
+
+    @staticmethod
+    def _key(path: Path) -> str:
+        return str(path).lstrip("/")
+
+    def write(self, path: Path, data: bytes) -> None:
+        # x-upsert lets a re-tailor/overwrite replace an existing object.
+        resp = self._client.post(
+            f"/object/{self._bucket}/{self._key(path)}",
+            content=data,
+            headers={"content-type": "application/octet-stream", "x-upsert": "true"},
+        )
+        resp.raise_for_status()
+
+    def read(self, path: Path) -> bytes:
+        resp = self._client.get(f"/object/{self._bucket}/{self._key(path)}")
+        resp.raise_for_status()
+        return resp.content
+
+    def delete(self, path: Path) -> None:
+        # Missing objects are fine (idempotent delete), like LocalBlobStore.
+        self._client.request("DELETE", f"/object/{self._bucket}/{self._key(path)}")
+
+    def exists(self, path: Path) -> bool:
+        resp = self._client.get(f"/object/info/{self._bucket}/{self._key(path)}")
+        return resp.status_code == 200
+
+    def local_path(self, path: Path) -> Path | None:  # noqa: ARG002 - remote store
+        return None
+
+    def delete_tree(self, directory: Path) -> None:
+        prefix = self._key(directory)
+        listing = self._client.post(
+            f"/object/list/{self._bucket}", json={"prefix": prefix, "limit": 1000}
+        )
+        if listing.status_code != 200:
+            return
+        names = [f"{prefix}/{obj['name']}" for obj in listing.json() if obj.get("name")]
+        if names:
+            self._client.request("DELETE", f"/object/{self._bucket}", json={"prefixes": names})
+
+
+def make_blob_store() -> BlobStore:
+    """Construct the file-storage backend.
+
+    ``storage_backend`` selects it: ``supabase`` (or ``auto`` when Supabase Storage
+    is configured) → :class:`SupabaseBlobStore`; otherwise :class:`LocalBlobStore`.
+    Callers depend on the Protocol, so nothing else changes. See docs/auth-and-hosting.md.
+    """
+    mode = settings.storage_backend
+    if mode == "supabase" or (mode == "auto" and settings.supabase_storage_configured):
+        return SupabaseBlobStore(
+            settings.supabase_url, settings.supabase_service_key, settings.supabase_storage_bucket
+        )
+    if mode in ("auto", "local", ""):
         return LocalBlobStore()
-    raise ValueError(f"Unknown blob_backend: {backend!r}")
+    raise ValueError(f"Unknown storage_backend: {mode!r}")
 
 
 # Module-level default so callers don't re-instantiate. Swapping the backend is a

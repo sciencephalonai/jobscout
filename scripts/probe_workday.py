@@ -37,7 +37,7 @@ from jobscout.adapters.workday import WorkdayAdapter, parse_workday_url  # noqa:
 
 SEED_FILE = REPO_ROOT / "data" / "workday_cap_exempt_seeds.txt"
 DISCOVERED_FILE = REPO_ROOT / "sources.discovered.yaml"
-_VALID_TYPES = {"university", "hospital", "nonprofit", "government"}
+_VALID_TYPES = {"university", "hospital", "nonprofit", "government", "for_profit"}
 
 
 def load_seeds(path: Path) -> list[dict[str, str]]:

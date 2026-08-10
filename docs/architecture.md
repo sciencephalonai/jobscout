@@ -138,6 +138,8 @@ at 1,000 embeds/day; ingestion and refresh are budget-capped (`embed_daily_budge
 | **Service layer** | `services/source_config.py` (sources.yaml + adapter construction), `services/query_service.py` (dedup, date-range, resume match, semantic scoring, saved-search counts), `services/ingestion_service.py` (ingestion / enrichment / watchlist-refresh background jobs) |
 | API | `api/main.py` (FastAPI app + routes; delegates business logic to the service layer), `api/admin.py` (operator/admin console: `/api/admin/*`, require_admin-gated) |
 | Tenancy seam | `api/deps.py` (`current_user_id` = the single auth drop-in, `effective_owner`, `owned_profile` = the authz primitive, `require_admin`) + the `enforce_profile_ownership` middleware in `api/main.py` (path routes) with `owned_profile` on query/body routes. Jobs/enrichment/vectors are global; profiles/resumes/tailored/deep-match/saved-searches are per-`user_id` and leak-proof by construction — see [multi-tenancy.md](multi-tenancy.md) |
+| Auth (identity) | `auth/auth0.py` (PyJWT JWKS verify) wired into `current_user_id`; frontend `auth/` (`@auth0/auth0-react` provider + login gate + token injection). Env-gated — see [auth-and-hosting.md](auth-and-hosting.md) |
+| Data backends (swappable seams) | Relational: `RelationalStore` Protocol → `DuckDBRelationalStore` (local/test) or `PostgresRelationalStore` (Supabase, psycopg pool). Files: `BlobStore` Protocol → `LocalBlobStore` or `SupabaseBlobStore`. Factories `make_relational_store`/`make_blob_store` pick by env. Weaviate (vectors) unchanged |
 | Frontend | `frontend/src/` (React + Vite + TanStack Query + Tailwind) |
 
 Layering: **routes (`api/main.py`) → services (`services/*`) → repositories (`store.py` Weaviate, `relational.py` DuckDB) → schemas (`models.py`)**. Services are stateless functions taking the open stores as parameters. `RelationalStore` serializes its single DuckDB connection with a re-entrant lock (`_synchronized_methods`) because ingestion runs in a background thread alongside request handlers.
@@ -226,16 +228,24 @@ Pre-library single uploads are lazily adopted as record 0 on first library view.
 
 ```mermaid
 flowchart TD
-    T["Tailor DOCX (job + active profile)"] --> G{"rule verdict = reject<br/>OR deep-match = skip?"}
+    T["Tailor (job + active profile)"] --> G{"rule verdict = reject<br/>OR deep-match = skip?"}
     G -->|yes, no force| STOP["return built:false + gate reasons"]
-    G -->|no, or force:true| BUILD["resume_tailoring_gate → build + audit DOCX (private toolkit)"]
-    BUILD --> CAT["upsert tailored_resumes catalog row"]
-    CAT --> DL["download anytime (dated filename)"]
+    G -->|no, or force:true| E{"settings.tailor_engine"}
+    E -->|"latex (default)"| L["latex_tailor: LLM writes canonical-constrained plan →<br/>xelatex PDF + pandoc DOCX → warn-only audit →<br/>resume_metrics before/after"]
+    E -->|node| N["private DOCX toolkit (build + hard audit)"]
+    L --> CAT["upsert tailored_resumes catalog row (engine, pdf, metrics_json, ai_risk_after)"]
+    N --> CAT
+    CAT --> DASH["per-job dashboard (rings + before/after deltas)<br/>+ per-candidate dashboard (Profile tab)"]
 ```
 
 The deterministic JD gate (US-only, no citizenship/clearance/ITAR wall, no explicit no-sponsorship, not a
 5+-year role) runs before any model tokens are spent; a *skip* conclusion is overridable with `force`.
-Every successful build is catalogued so it stays downloadable from the Profile tab long after the response.
+`build_tailored_resume` dispatches on `settings.tailor_engine`. The default **LaTeX engine**
+(`latex_tailor.py`) is multi-candidate: it constrains the LLM to the profile's *own* resume facts, renders
+a fixed template (deterministic escaped injection, never model-authored LaTeX), builds a **PDF + DOCX**,
+runs a warn-only fabrication audit, and scores before/after **AI-reduction metrics** (`resume_metrics.py`,
+a pure-Python lightweight suite). The legacy `node` engine keeps the private-toolkit DOCX path. Every build
+is catalogued (with metrics) and drives the native-React per-job and per-candidate dashboards.
 
 ## 10. First-run seed + retention
 

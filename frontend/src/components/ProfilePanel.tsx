@@ -41,6 +41,7 @@ import {
 import { useActiveProfile } from '../ProfileContext'
 import { ResumeDropMatch } from './ResumeMatchPanel'
 import ResumeLibrary from './ResumeLibrary'
+import CandidateDashboard from './CandidateDashboard'
 import StructuredSections, { SkillCategoriesCard } from './ProfileStructured'
 import Modal from './ui/Modal'
 import TagInput from './ui/TagInput'
@@ -602,6 +603,12 @@ export default function ProfilePanel() {
         {showUpload && <ResumeDropMatch />}
 
         <ResumeLibrary profileId={profile.id} />
+
+        {/* ── Dashboard: tailored resumes (AI-reduction scores) + application funnel ── */}
+        <section className="workspace-surface px-4 py-3.5">
+          <h2 className="mb-2 text-sm font-semibold text-slate-700">Dashboard</h2>
+          <CandidateDashboard profileId={profile.id} />
+        </section>
 
         <div className="grid gap-3 lg:grid-cols-[1fr_minmax(20rem,26rem)]">
           {/* ── Left: resume sections (structured when parsed; flat fallback) ── */}

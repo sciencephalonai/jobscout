@@ -83,6 +83,13 @@ class Settings(BaseSettings):
     # planner prompt. Blank = skipped.
     resume_writer_legacy_dir: str = ""
     tailored_resume_storage_dir: str = "./data/tailored-resumes"
+    # Which resume generator to use: "latex" (default) builds a PDF + DOCX from the
+    # profile's own content via xelatex/pandoc and computes AI-reduction metrics;
+    # "node" keeps the legacy private DOCX toolkit (needs RESUME_WRITER_DIR).
+    tailor_engine: str = "latex"
+    # Directory holding resume_template.tex for the LaTeX engine. Blank → the
+    # bundled backend/jobscout/resume_templates/.
+    resume_template_dir: str = ""
     # Optional path that exposes the toolkit's `docx` Node dependency. If blank,
     # the service also checks the toolkit and the local user's node_modules.
     resume_writer_node_path: str = ""
@@ -120,6 +127,22 @@ class Settings(BaseSettings):
     usage_metering_enabled: bool = False      # RECORD per-account usage (for monitoring) without capping
     quota_enforced: bool = False              # ENFORCE per-account usage caps (implies recording)
     require_auth: bool = False                # 401 without a valid session (gate only)
+    # ── Identity (Auth0) + hosting (Supabase) ────────────────────────────────────
+    # All blank = today's single local user, zero external services. Mirrors the
+    # Leelaa setup (Auth0 for identity, Supabase for Postgres + Storage). See
+    # docs/auth-and-hosting.md. Setting AUTH0_DOMAIN wires real login at the
+    # api/deps.current_user_id seam; verify tokens against this tenant's JWKS.
+    auth0_domain: str = ""                     # e.g. dev-xyz.us.auth0.com
+    auth0_audience: str = ""                   # the Auth0 API identifier, e.g. https://api.jobscout.app
+    # Supabase Postgres — direct SQL connection string. When set, make_relational_store
+    # uses PostgresRelationalStore instead of DuckDB (which stays the local/test fallback).
+    database_url: str = ""                     # postgresql://…  (alias: SUPABASE_DB_URL)
+    supabase_db_url: str = ""                  # convenience: copied into database_url if that's blank
+    # Supabase Storage — when url+key+bucket are set, files go to Supabase instead of local disk.
+    supabase_url: str = ""                     # e.g. https://<ref>.supabase.co
+    supabase_service_key: str = ""             # service-role key (server-side only; never exposed)
+    supabase_storage_bucket: str = "jobscout-files"
+    storage_backend: str = "auto"             # auto | local | supabase
     # Default limit VALUES (used by entitlements.resolve_limits; None = unlimited).
     # These are the GLOBAL defaults; a user's plan/limits_json can override per account.
     rate_limit_per_min: int | None = 120
@@ -134,6 +157,21 @@ class Settings(BaseSettings):
     llm_spend_per_day: int | None = None
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
+    @property
+    def effective_database_url(self) -> str:
+        """Postgres DSN, accepting either DATABASE_URL or SUPABASE_DB_URL."""
+        return self.database_url or self.supabase_db_url
+
+    @property
+    def auth0_configured(self) -> bool:
+        """True once an Auth0 tenant is set — flips on real JWT verification."""
+        return bool(self.auth0_domain)
+
+    @property
+    def supabase_storage_configured(self) -> bool:
+        """True when Supabase Storage is fully configured."""
+        return bool(self.supabase_url and self.supabase_service_key and self.supabase_storage_bucket)
 
 
 settings = Settings()

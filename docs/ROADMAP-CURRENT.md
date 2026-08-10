@@ -55,6 +55,56 @@
 | 2 | **"Which profile do I tailor with?"** (Build 20): new `GET /jobs/{job_id}/profile-fits` (deterministic `score_verdict`, **no LLM**) → each profile's fit %; detail pane gains a **"Tailor as [Profile ▾]"** selector defaulting to the **best-fit** profile for THIS job (hidden with <2 profiles), routing both the tailor action and the already-tailored lookup through the choice; a subtle **better-fit nudge** ("X fits this job better · Set active") when another profile beats the active one by ≥10 pts. HelpModal answers it | ✅ done |
 | 3 | **Multi-tenancy seam — leak-proof by construction, no auth yet** (Build 21): `user_id` on `UserProfile`/`SavedSearch` (legacy empty → local user, stamped on upsert); `api/deps.py` (`current_user_id` = the ONE auth drop-in, `effective_owner`, `require_admin`); a single `enforce_profile_ownership` HTTP middleware guards all 24 profile-scoped routes with **404 (not 403)** so the whole IDOR class is impossible; list endpoints + saved-search seen/delete scoped to the caller; global-write routes (`PUT /settings`, `/maintenance/*`, `/scheduler`, `/sources/overrides`) admin-gated (open locally, 403 when hosting). New `docs/multi-tenancy.md` (data split diagram, leak table, Postgres/quota notes). 14 tenancy tests | ✅ done |
 
+## Round 5 (pipeline analytics) — 2026-07-16
+
+| # | Item | Status |
+|---|------|--------|
+| 1 | **Application funnel analytics** (ApplyRyt-inspired): `PipelineAnalytics.from_entries` (pure, testable) rolls the pipeline into total applications, response/screening/interview/offer rates, and a per-source (Direct vs Discovery) conversion table. Embedded in `GET /api/profiles/{id}/pipeline` (`analytics` key), computed over ALL rows incl. jobs aged out of the index. Frontend: `PipelineStats` KPI tiles + per-source table above the tracker (stat tiles, no chart). 7 tests; api/user-guide docs. Single-status store → "reached" rates are a documented conservative floor; response rate is exact | ✅ done |
+
+> Reviewed applyryt.com for feature ideas. Its other pillars already existed: per-role resume tailoring
+> (`tailor.py` + tailored library), career-pages-only sourcing + **Direct sources** filter
+> (`build_filters(direct_sources_only=)`, JobCard badge), daily qualified shortlist (`routine_shortlist`),
+> qualification matching (`verdict`/`deep_match`/`eligibility`). "Apply on your behalf" is out of scope —
+> auto-submitting to career pages conflicts with the compliance stance. Only the funnel analytics was a
+> genuine gap.
+
+## Round 6 (LaTeX resume engine + AI-reduction metrics + dashboards) — 2026-07-16
+
+Design spec: `superpowers/specs/2026-07-16-resume-generation-metrics-dashboards-design.md`.
+
+| # | Item | Status |
+|---|------|--------|
+| 1 | **AI-reduction metric suite** (`resume_metrics.py`): lightweight pure-Python port of the research `metrics_advanced.py` — readability/lexical/character/structure/function-word/repetition/buzzword families + composite AI-risk (`compute_metrics`/`ai_risk`/`delta`). No torch/spaCy/sentence-transformers; `textstat`/`nltk` optional & graceful. 10 tests | ✅ done |
+| 2 | **LaTeX generation engine** (`latex_tailor.py`, default `settings.tailor_engine="latex"`): multi-candidate — LLM writes a canonical-constrained content plan from the profile's OWN resume; deterministic escaped injection into a bundled template (never model-authored LaTeX); xelatex **PDF** + pandoc **DOCX**; warn-only fabrication audit; before/after metrics. `tailor.py` dispatches; `node` engine kept as opt-in. 20 tests incl. a real xelatex+pandoc build (gated on toolchain) | ✅ done |
+| 3 | **Model/DB/API**: `TailoredResumeRecord` gains engine/pdf_filename/metrics_json/ai_risk_after (JSON-blob table → no migration); `get_tailored`; routes `POST /tailor` returns metrics+pdf_url, `GET …/tailored/{job}/pdf`, `…/metrics`, `GET …/dashboard` (candidate roll-up). All under the ownership middleware | ✅ done |
+| 4 | **Native React dashboards**: `AiRing` (status-band donut), `JobDashboard` (per-job: before→after humanization rings + top metric deltas + audit warnings, in the detail pane), `CandidateDashboard` (Profile tab: tailored resumes w/ humanization score + PDF/DOCX + pipeline funnel via exported `PipelineStats`). dataviz-styled | ✅ done |
+| 5 | Docs: api/architecture(mermaid)/configuration/user-guide + `metrics` optional extra in pyproject | ✅ done |
+
+> Ideas ported from the personal `Resume - Data/` toolkit. Realization choices vs the raw toolkit:
+> (a) LLM emits structured JSON, not raw LaTeX — deterministic render removes compile/injection fragility
+> and makes the audit tractable (the strongest form of the spec's "constrain the template surface");
+> (b) dashboards are native React fed by metrics JSON, not the raw `report_helpers.py` HTML;
+> (c) personas dropped (multi-candidate: each profile is the candidate); (d) audit is warn-only.
+> "Apply on your behalf" remains out of scope (compliance).
+
+## Round 7 (Auth0 + Supabase hosting) — 2026-07-16
+
+Design spec: `superpowers/specs/2026-07-16-auth0-supabase-hosting-design.md`. Mirrors the Leelaa
+setup (Auth0 = identity, Supabase = data). All env-gated → local behavior unchanged when unset.
+
+| # | Item | Status |
+|---|------|--------|
+| 1 | **Auth0 identity** (Phase 1): `auth/auth0.py` (PyJWT + JWKS, RS256, iss/aud); `api/deps.current_user_id` verifies the Bearer token + resolves/auto-provisions the `users` row (`sub`→`email`), `require_auth`→401, local fallback when unconfigured. Frontend `@auth0/auth0-react` provider + login gate + `apiFetch` bearer + `UserMenu`. 12 tests | ✅ done |
+| 2 | **Supabase Postgres** (Phase 2): `PostgresRelationalStore` subclasses `DuckDBRelationalStore` and swaps only the connection for a psycopg-pool adapter that mimics DuckDB's `execute().fetchall()` + translates `?`→`%s` — reuses all ~50 method bodies verbatim (zero risk to the DuckDB suite). Null lock (pool is thread-safe) → real concurrency. `make_relational_store` picks Postgres on `DATABASE_URL`/`SUPABASE_DB_URL`, DuckDB otherwise. `migrate_duckdb_to_postgres.py`. **6 integration tests against real Postgres 16 in Docker** | ✅ done |
+| 3 | **Supabase Storage** (Phase 3): `SupabaseBlobStore` (Storage REST via httpx, service key); `make_blob_store` picks it when configured. Tailor writes + all 4 download routes route through the `BlobStore` seam (`_serve_file`: FileResponse local / streamed bytes remote). 7 tests (httpx mocked) | ✅ done |
+| 4 | Docs: new `docs/auth-and-hosting.md` (setup walkthrough + config matrix + mermaid); configuration/architecture/multi-tenancy updates; `env.example` + `frontend/.env.example` | ✅ done |
+
+> Realization notes vs the raw Leelaa code: (a) Postgres via **direct psycopg SQL**, not
+> supabase-py/PostgREST — JobScout's SQL is already Postgres-portable and its joins/aggregations
+> don't fit PostgREST; (b) the store swaps the *connection*, not the method bodies, so one copy of the
+> SQL stays guarded by the existing tests; (c) **no RLS** — app-level tenancy (`owned_profile`) is
+> already leak-proof; (d) DuckDB kept as the local/test fallback (not deleted).
+
 ### Deliberate won't-do (with reasons)
 - **User-level "For You" (union across all profiles)** — ❌ dropped. The recommended model is **one
   profile + many resumes**, so a cross-profile union feed is unnecessary. Multi-profile capability stays

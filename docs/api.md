@@ -36,8 +36,11 @@ admin-gated, so adding real login later can't leak data. See [multi-tenancy.md](
 | POST | `/api/profiles/{id}/reparse` | Rebuild skills, target roles, experience, and sponsorship from saved resume text. |
 | POST | `/api/profiles/{id}/attach-resume/{source_id}` | Copy another profile's saved resume (text + file) onto a metadata-only profile without losing its preferences. |
 | POST | `/api/profiles/{id}/suggest` | ADD-ONLY AI suggestions for one list field. Body `{field}` (interests, avoid_role_types, avoid_domains, target_titles, skills) → `{suggestions[]}` filtered against current values. 1 LLM call; read-only — the UI adds accepted items via the normal PUT. |
-| POST | `/api/profiles/{id}/tailor/{job_id}` | Apply the hard JD gate, select only verified canonical evidence with the active LLM provider, then build + audit a tailored DOCX. Returns a local `download_url`. Records the build in the tailored catalog. |
+| POST | `/api/profiles/{id}/tailor/{job_id}` | Apply the hard JD gate, then build + audit a tailored resume. The default **LaTeX engine** (`settings.tailor_engine="latex"`) has the LLM write a canonical-constrained content plan from the profile's own resume, renders it to **PDF + DOCX** (xelatex/pandoc), runs a warn-only fabrication audit, and scores before/after **AI-reduction metrics**. Returns `download_url`, `pdf_download_url`, `engine`, and the `metrics` bundle. (`tailor_engine="node"` keeps the legacy private DOCX toolkit.) Records the build in the tailored catalog. |
 | GET | `/api/profiles/{id}/tailored/{job_id}` | Download the audited tailored DOCX. Filename is the **stored** name (user-editable, source of truth); legacy rows fall back to a computed dated name. |
+| GET | `/api/profiles/{id}/tailored/{job_id}/pdf` | Download the LaTeX-engine PDF for a tailored resume (404 if none was built). |
+| GET | `/api/profiles/{id}/tailored/{job_id}/metrics` | The AI-reduction metric bundle `{before, after, delta, ai_risk_*, humanization_*}` for one tailored resume (powers the per-job dashboard). 404 when the resume has no metrics. |
+| GET | `/api/profiles/{id}/dashboard` | Per-candidate dashboard: `{profile, tailored[], pipeline}` — profile summary, every tailored resume with its `ai_risk_after` + PDF/DOCX links + `up_to_date`, and the pipeline-analytics funnel. |
 | PATCH | `/api/profiles/{id}/tailored/{job_id}` | Rename a built tailored resume's download filename. Body `{filename}` → trimmed, forced `.docx`, sibling-collisions auto-suffixed ("name (2).docx"); returns the saved name. |
 | DELETE | `/api/profiles/{id}` | Delete a profile (+ its job-state, resume-library, and tailored-catalog rows). |
 
@@ -53,7 +56,7 @@ admin-gated, so adding real login later can't leak data. See [multi-tenancy.md](
 | DELETE | `/api/profiles/{id}/resumes/{rid}` | Delete a resume; if active, the next-newest is promoted. |
 | GET | `/api/profiles/{id}/tailored` | List built tailored resumes (company, title, `filename`, recommendation, date, `download_url`), newest first. Each row carries `up_to_date` — false when the profile's resume changed since the build (fingerprint mismatch), so the UI can prompt a re-tailor. |
 | POST | `/api/profiles/{id}/job-state` | Mark a job. Body: `{job_id, status, note?}`. Status ∈ triage (`saved`\|`seen`\|`hidden`) or pipeline (`applied`\|`oa`\|`interview`\|`offer`\|`rejected`). |
-| GET | `/api/profiles/{id}/pipeline` | Application tracker: `{jobs, stages:{job_id:{stage,note,updated_at}}}`. |
+| GET | `/api/profiles/{id}/pipeline` | Application tracker: `{jobs, stages:{job_id:{stage,note,updated_at}}, analytics}`. `analytics` is a funnel rollup — `total_applications`, `by_stage`, `responded`, `response_rate`/`screening_rate`/`interview_rate`/`offer_rate` (0–1), and `by_source[]` (per-provenance apps/replied/offers). Computed over ALL pipeline rows, including jobs that have aged out of the index. |
 
 ## Companies (registry)
 

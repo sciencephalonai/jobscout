@@ -20,8 +20,10 @@ YAML policy files. Everything is read relative to the **repo root** — run the 
 | `WEAVIATE_URL` | Local Weaviate | Default `http://localhost:8080`. |
 | `ADZUNA_APP_ID` / `ADZUNA_APP_KEY` | Adzuna source | Optional. |
 | `RELATIONAL_DB_PATH` | DuckDB file | Default `./jobscout.duckdb`. |
-| `RESUME_WRITER_DIR` | Private resume-writing toolkit | Its canonical facts, presets, single DOCX builder, and auditor power tailored resumes. Default points to the supplied local skill. |
-| `TAILORED_RESUME_STORAGE_DIR` | Generated DOCX storage | Default `./data/tailored-resumes`; local-only and gitignored. |
+| `TAILOR_ENGINE` | Resume generator | `latex` (default) builds a **PDF + DOCX** from the profile's own content with AI-reduction metrics; `node` uses the legacy private DOCX toolkit (needs `RESUME_WRITER_DIR`). |
+| `RESUME_TEMPLATE_DIR` | LaTeX engine template dir | Blank → the bundled `backend/jobscout/resume_templates/`. Override to supply your own `resume_template.tex`. |
+| `RESUME_WRITER_DIR` | Private resume-writing toolkit (`node` engine only) | Its canonical facts, presets, single DOCX builder, and auditor power the legacy tailored-DOCX path. |
+| `TAILORED_RESUME_STORAGE_DIR` | Generated resume storage | Default `./data/tailored-resumes`; local-only and gitignored. The LaTeX engine writes `{profile}/{job}.docx` **and** a sibling `.pdf`. |
 | `EMBED_DAILY_BUDGET` | Max embeds per ingest/refresh run | Default `500`. The Gemini free tier is 1,000 embeds/day **shared** with search + resume-match, so this reserves ~half the day's quota for searching. |
 | `SCHEDULER_ENABLED` | Daily auto-refresh | Default `false`. Toggle at runtime via Settings or `POST /api/scheduler`. |
 | `SCHEDULER_HOUR` | Hour to run the daily refresh | Default `6`. |
@@ -31,6 +33,28 @@ YAML policy files. Everything is read relative to the **repo root** — run the 
 | `RESUME_STORAGE_DIR` | Uploaded resume files | Default `./data/resumes`; local-only and gitignored. Library uploads live at `{profile_id}/{resume_id}.{ext}`. |
 
 > The app reads **`.env`** (with the leading dot). `env.example` is the template.
+
+### Auth & hosting (Auth0 + Supabase)
+
+All optional and env-gated — unset = single local user, DuckDB, local files (today's behavior).
+Setting `AUTH0_DOMAIN` turns on real login (JWT verified at `api/deps.current_user_id`);
+`SUPABASE_DB_URL`/`DATABASE_URL` switches the relational store to Postgres (DuckDB stays the
+fallback); `SUPABASE_URL`+`SUPABASE_SERVICE_KEY`+`SUPABASE_STORAGE_BUCKET` moves files to Supabase
+Storage. Frontend Auth0 vars (`VITE_AUTH0_*`) live in `frontend/.env`. Full walkthrough +
+config matrix: **[docs/auth-and-hosting.md](auth-and-hosting.md)**.
+
+### LaTeX resume engine — system dependencies
+
+The default `latex` tailor engine shells out to **`xelatex`** (TeX Live) and **`pandoc`**, so
+both must be on `PATH`. The bundled template uses **Palatino** + **Helvetica Neue**, present by
+default on macOS; on other systems install those fonts or edit
+`backend/jobscout/resume_templates/resume_template.tex`. A missing toolchain surfaces a clear
+error at tailor time (the build is on-demand). To fall back to the DOCX-only path, set
+`TAILOR_ENGINE=node` (needs `RESUME_WRITER_DIR`).
+
+The **AI-reduction metric suite** (`resume_metrics.py`) is pure-Python and needs nothing extra;
+installing the optional `metrics` extra (`pip install -e ".[metrics]"`, adds `textstat`) enables
+the graded-readability family. Missing optional deps degrade one metric family, never the build.
 
 ---
 

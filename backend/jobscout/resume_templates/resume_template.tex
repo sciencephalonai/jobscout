@@ -1,0 +1,98 @@
+% =============================================================================
+% JobScout tailored-resume template — executive one/two-column style.
+% Compile with: xelatex resume_template.tex
+% Fonts are TeX Gyre (bundled with TeX Live) so there is NO system-font
+% dependency — the build works on any machine with a full TeX Live install.
+% Placeholder slots (double-percent delimited) are filled deterministically by
+% latex_tailor.py with escaped content; do not repeat the literal slot tokens in
+% comments, or replacement would inject content into this header.
+% =============================================================================
+
+\documentclass[10pt,letterpaper]{article}
+\usepackage[top=0.4in,bottom=0.35in,left=0.6in,right=0.6in]{geometry}
+
+% --- Fonts: Palatino serif body + Helvetica Neue sans headings ---
+% System fonts present by default on macOS (this is a local macOS tool). If you
+% run the LaTeX engine elsewhere, install these (or edit this template) — see
+% docs/configuration.md.
+\usepackage{fontspec}
+\setmainfont{Palatino}
+\setsansfont{Helvetica Neue}
+
+% --- Two colors only: accent blue for headings, gray for dates/subtitles ---
+\usepackage{xcolor}
+\definecolor{AccentBlue}{RGB}{0,0,255}
+\definecolor{SubtleGray}{RGB}{68,68,68}
+
+\usepackage{enumitem}
+\usepackage{tabularx}
+\usepackage{parskip}
+\usepackage[hidelinks]{hyperref}
+\hypersetup{colorlinks=true,urlcolor=AccentBlue,linkcolor=AccentBlue}
+
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{1pt}
+\pagestyle{empty}
+
+% Section heading: blue, sans, with a full-width rule.
+\renewcommand{\section}[1]{%
+  \vspace{4pt}%
+  {\sffamily\large\bfseries\color{AccentBlue}#1}\\[-6pt]%
+  {\color{AccentBlue}\rule{\textwidth}{1.2pt}}%
+  \vspace{2pt}%
+}
+
+% Role header: company + location (top), title + dates (below).
+\newcommand{\roleheader}[4]{%
+  \vspace{3pt}\noindent
+  \begin{tabularx}{\textwidth}{@{}X r@{}}
+    {\sffamily\textbf{\color{AccentBlue}#1}} & \textcolor{SubtleGray}{#2} \\
+    \textit{\color{SubtleGray}#3} & \textcolor{SubtleGray}{#4} \\
+  \end{tabularx}\vspace{1pt}%
+}
+
+% Blue-bulleted list.
+\newenvironment{bullets}{%
+  \begin{itemize}[leftmargin=14pt,itemsep=1pt,parsep=0pt,topsep=1pt,label={\color{AccentBlue}\textbullet}]
+}{\end{itemize}}
+\newcommand{\bulletitem}[1]{\item #1}
+
+% Skill category: bold blue label + inline content.
+\newcommand{\skillcat}[2]{%
+  \noindent{\sffamily\textbf{\color{AccentBlue}#1:}} #2\par\vspace{1pt}%
+}
+
+% Education row: degree + institution (left), year (right).
+\newcommand{\edurow}[3]{%
+  \noindent
+  \begin{tabularx}{\textwidth}{@{}X r@{}}
+    {\textbf{#1}, #2} & \textcolor{SubtleGray}{#3} \\
+  \end{tabularx}\vspace{1pt}%
+}
+
+% =============================================================================
+\begin{document}
+
+\begin{center}
+  {\sffamily\LARGE\bfseries\color{AccentBlue} %%NAME%%}\\[3pt]
+  {\small %%CONTACT_LINE%%}
+\end{center}
+\vspace{-2pt}
+{\color{AccentBlue}\rule{\textwidth}{1.2pt}}
+\vspace{2pt}
+
+\section{Executive Profile}
+%%SUMMARY%%
+
+\section{Professional Experience}
+%%EXPERIENCE%%
+
+\section{Education}
+%%EDUCATION%%
+
+\section{Technical Competencies}
+%%SKILLS%%
+
+%%ADDITIONAL%%
+
+\end{document}

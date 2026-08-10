@@ -228,7 +228,8 @@ def test_tailor_preflight_gate_blocks_and_force_overrides(client, monkeypatch) -
     def _fake_build(j, p):  # noqa: ANN001
         built["n"] += 1
         return SimpleNamespace(filename="x.docx", notes=[], warnings=[],
-                               provider="deepseek", model="m")
+                               provider="deepseek", model="m",
+                               engine="node", pdf_path=None, metrics=None)
 
     monkeypatch.setattr(main, "build_tailored_resume", _fake_build)
 

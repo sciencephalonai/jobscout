@@ -201,9 +201,30 @@ export const PIPELINE_STAGES: { key: JobState; label: string }[] = [
   { key: 'rejected', label: 'Rejected' },
 ]
 
+export interface PipelineSourceStat {
+  source: string
+  source_kind: 'primary' | 'government' | 'curated' | 'aggregator' | 'scraper'
+  applications: number
+  responded: number
+  offers: number
+}
+
+// Funnel rollup over the pipeline. Rates are 0–1 fractions of total applications.
+export interface PipelineAnalytics {
+  total_applications: number
+  by_stage: Record<JobState, number>
+  responded: number
+  response_rate: number
+  screening_rate: number
+  interview_rate: number
+  offer_rate: number
+  by_source: PipelineSourceStat[]
+}
+
 export interface PipelineResponse {
   jobs: Job[]
   stages: Record<string, { stage: JobState; note: string | null; updated_at: string }>
+  analytics: PipelineAnalytics
 }
 
 export interface SavedSearch {
@@ -280,7 +301,75 @@ export interface TailoredResumeResponse {
   warnings?: string[]
   provider?: 'deepseek' | 'nvidia'
   model?: string
+  engine?: 'latex' | 'node'
   download_url?: string
+  pdf_download_url?: string | null
+  metrics?: ResumeMetrics
+}
+
+// ── AI-reduction ("humanization") metrics ─────────────────────────────────────
+export type MetricBand = 'good' | 'warning' | 'serious'
+
+export interface ResumeComposite {
+  ai_risk_score: number
+  humanization_score: number
+  band: MetricBand
+  drivers: { factor: string; score: number }[]
+}
+
+// A metric family bundle; only `composite` is strongly typed (families are numeric maps).
+export interface ResumeBundle {
+  composite?: ResumeComposite
+  [family: string]: Record<string, unknown> | ResumeComposite | undefined
+}
+
+export interface MetricDeltaRow {
+  family: string
+  metric: string
+  before: number | null
+  after: number | null
+  delta: number | null
+  direction: 'better' | 'worse' | 'neutral'
+}
+
+export interface ResumeMetrics {
+  before: ResumeBundle
+  after: ResumeBundle
+  delta: MetricDeltaRow[]
+  ai_risk_before: number | null
+  ai_risk_after: number | null
+  humanization_before: number | null
+  humanization_after: number | null
+}
+
+export interface TailoredMetricsResponse {
+  job_id: string
+  engine: string
+  filename: string
+  warnings: string[]
+  metrics: ResumeMetrics
+}
+
+// ── Per-candidate dashboard (GET /api/profiles/{id}/dashboard) ─────────────────
+export interface DashboardTailoredRow {
+  job_id: string
+  company: string
+  title: string
+  filename: string
+  engine: string
+  ai_risk_after: number | null
+  recommendation: string | null
+  up_to_date: boolean
+  created_at: string
+  download_url: string
+  pdf_download_url: string | null
+  has_metrics: boolean
+}
+
+export interface CandidateDashboardResponse {
+  profile: { id: string; label: string; target_titles: string[]; has_resume: boolean }
+  tailored: DashboardTailoredRow[]
+  pipeline: PipelineAnalytics
 }
 
 // Backend wiring shown in the Settings panel (GET/PUT /api/settings).

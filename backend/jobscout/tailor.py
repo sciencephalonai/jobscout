@@ -13,13 +13,13 @@ import json
 import logging
 import os
 import re
-import shutil
 import subprocess
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from jobscout.blob import blob_store
 from jobscout.config import settings
 from jobscout.enrich import (
     EnrichmentError,
@@ -54,7 +54,11 @@ class EligibilityError(TailoringError):
 
 @dataclass(frozen=True)
 class TailoredResume:
-    """A completed, audited resume plus transparent tailoring context."""
+    """A completed, audited resume plus transparent tailoring context.
+
+    ``pdf_path`` and ``metrics`` are populated only by the LaTeX engine
+    (``latex_tailor``); the legacy Node engine leaves them ``None``.
+    """
 
     path: Path
     filename: str
@@ -62,6 +66,9 @@ class TailoredResume:
     warnings: list[str]
     provider: str
     model: str
+    pdf_path: Path | None = None
+    metrics: dict[str, Any] | None = None
+    engine: str = "node"
 
 
 def _toolkit_root() -> Path:
@@ -327,7 +334,21 @@ def tailored_resume_filename(job: Job) -> str:
 
 
 def build_tailored_resume(job: Job, profile: UserProfile) -> TailoredResume:
-    """Plan, build, audit, and retain one truthful DOCX for a saved job/profile."""
+    """Plan, build, audit, and retain one truthful resume for a saved job/profile.
+
+    Dispatches on ``settings.tailor_engine``: the default ``"latex"`` engine
+    (`latex_tailor`) builds a PDF + DOCX from the *profile's own* content plus
+    before/after AI-reduction metrics and works for any candidate; ``"node"``
+    keeps the legacy DOCX-only toolkit path below. No silent fallback between
+    them — a broken engine surfaces its error rather than masquerading as the
+    other.
+    """
+    if (settings.tailor_engine or "latex").strip().lower() == "latex":
+        # Lazy import avoids a circular import (latex_tailor reuses helpers here).
+        from jobscout.latex_tailor import build_latex_resume
+
+        return build_latex_resume(job, profile)
+
     warnings = resume_tailoring_gate(job, profile)
     root = _toolkit_root()
     canonical = _load_json(root / "data" / "canonical.json")
@@ -374,7 +395,7 @@ def build_tailored_resume(job: Job, profile: UserProfile) -> TailoredResume:
         if not built.is_file():
             raise TailoringError("Resume builder finished without producing the expected DOCX.")
         _run_checked(["python3", str(root / "scripts" / "audit.py"), str(built), "--render"], cwd=root, env=env, timeout=75)
-        shutil.copy2(built, output_path)
+        blob_store.write(output_path, built.read_bytes())
 
     provider, _key, model = active_llm_configuration()
     log.info("tailored_resume_built profile=%s job=%s provider=%s model=%s", profile.id, job.job_id, provider, model)

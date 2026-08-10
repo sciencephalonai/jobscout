@@ -36,6 +36,7 @@ import {
 import AddToWatchlistModal from './AddToWatchlistModal'
 import SettingsModal from './SettingsModal'
 import HelpModal from './HelpModal'
+import { UserMenu } from '../auth/UserMenu'
 
 // The primary action does two different things depending on whether a profile is
 // active, and the label alone never made that obvious. Both variants are spelled
@@ -237,6 +238,7 @@ function Sidebar() {
         <AutomationPanel />
         <button type="button" onClick={() => setShowHelp(true)} className="control-focus flex h-8 w-full items-center gap-2 rounded-lg px-2 text-xs font-medium text-white/55 hover:bg-white/[0.055] hover:text-white"><Question size={16} />How JobScout works</button>
         <button type="button" onClick={() => setShowSettings(true)} className="control-focus flex h-8 w-full items-center gap-2 rounded-lg px-2 text-xs font-medium text-white/55 hover:bg-white/[0.055] hover:text-white"><GearSix size={16} />Data & backend</button>
+        <UserMenu />
       </div>
 
       {showAddModal && <AddToWatchlistModal onClose={() => setShowAddModal(false)} />}

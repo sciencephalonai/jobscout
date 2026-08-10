@@ -97,23 +97,25 @@ accounts:
 The seam closes the profile rows above via the middleware, and the global-write routes
 via `require_admin` (open while `single_user_mode`, 403 once hosting).
 
-## Turning on real multi-user hosting
+## Turning on real multi-user hosting — WIRED (Auth0 + Supabase)
 
-The entire auth integration is **one function body** — `current_user_id` in
-`api/deps.py`:
+The seam described here is now implemented. `current_user_id` in `api/deps.py` verifies an
+Auth0 `Bearer` JWT and resolves/auto-provisions the `users` row; the relational store and
+file storage swap to Supabase Postgres/Storage via their factories. It stays inert until the
+env vars are set (unset = the single local user, DuckDB, local files). Setup + config matrix:
+**[auth-and-hosting.md](auth-and-hosting.md)**.
 
 ```python
 def current_user_id(request: Request) -> str:
-    return settings.local_user_id           # TODAY: the single local user
-    # HOSTING: return the id from a verified session cookie / Bearer JWT on `request`.
+    if not settings.auth0_configured:
+        return settings.local_user_id       # local: single user
+    token = bearer_token(request)           # else: verify the Auth0 JWT and
+    ...                                      # resolve/provision the account (sub→email)
 ```
 
-Replace that body with a real identity lookup and set `single_user_mode = False`.
-Nothing else changes — every route already routes ownership and admin checks through
-`deps.py`, and the `users` table already exists (seeded with one local user;
-`ensure_local_user`). When you wire the identity provider, insert a row per account and
-set each new profile's `user_id` to the authenticated user (the create/upload routes
-already stamp `current_user_id`).
+Nothing else changed — every route already routed ownership and admin checks through
+`deps.py`, and the `users` table already existed (`ensure_local_user`). New accounts are
+inserted on first login (`create_auth_user`); create/upload routes stamp `current_user_id`.
 
 ## Per-account entitlements, usage metering & the operator console (built)
 
@@ -138,10 +140,11 @@ usage rollups, and deployment aggregates. `GET /api/users/me` reports the caller
 1. **Per-user quota is seamed but dormant.** Ingestion routes spend shared DeepSeek + Gemini
    quota; turn on `quota_enforced` (and set plans) to cap it per account. A global spend cap +
    real rate limits (Tier-2 flags) belong on before public exposure.
-2. **Postgres, not embedded DuckDB.** DuckDB is embedded + single-writer — it does not fit
-   concurrent multi-user web traffic. Implement the `RelationalStore` Protocol for Postgres and
-   set `relational_backend=postgres`; nothing else changes (the SQL is already portable). Same
-   pattern for files: implement `BlobStore` for S3 and set `blob_backend=s3`.
+2. **Postgres over embedded DuckDB — BUILT.** `PostgresRelationalStore` (psycopg pool) is used
+   whenever `DATABASE_URL`/`SUPABASE_DB_URL` is set; DuckDB stays the local/test fallback. Files:
+   `SupabaseBlobStore` (Supabase Storage) via `storage_backend`. See
+   [auth-and-hosting.md](auth-and-hosting.md). (DuckDB is embedded + single-writer, so it stays for
+   local/dev only, not concurrent multi-user traffic.)
 
 See [pre-deployment-checklist.md](pre-deployment-checklist.md) for the full flip-these-flags /
 build-these-items list.

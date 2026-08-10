@@ -1,24 +1,23 @@
 # Enterprise / tech companies using Workday — high H-1B sponsors
-# Format: https://{tenant}.{region}.myworkdayjobs.com/{site}
+# Format: <career-site-url> | <type> | <Display Name>
 # probe_workday.py verifies each returns jobs before writing to sources.discovered.yaml
-https://salesforce.wd1.myworkdayjobs.com/External
-https://adobe.wd1.myworkdayjobs.com/External
-https://cisco.wd5.myworkdayjobs.com/Cisco
-https://tesla.wd1.myworkdayjobs.com/tesla_motors
-https://intuit.wd1.myworkdayjobs.com/Intuit_Careers
-https://atlassian.wd5.myworkdayjobs.com/AtlassianCareers
-https://shopify.wd1.myworkdayjobs.com/ShopifyJobs
-https://crowdstrike.wd5.myworkdayjobs.com/crowdstrikecareers
-https://paloaltonetworks.wd1.myworkdayjobs.com/External
-https://akamai.wd1.myworkdayjobs.com/External
-https://datadog.wd1.myworkdayjobs.com/datadoghq
-https://docusign.wd1.myworkdayjobs.com/External
-https://veeva.wd1.myworkdayjobs.com/veeva_careers
-https://uber.wd1.myworkdayjobs.com/Uber_External
-https://ibm.wd1.myworkdayjobs.com/IBMExternalSite
-https://hubspot.wd1.myworkdayjobs.com/HubSpot
-https://collibra.wd3.myworkdayjobs.com/External
-https://intuit.wd1.myworkdayjobs.com/Intuit_Careers
-https://zendesk.wd1.myworkdayjobs.com/zendesk
-https://workato.wd1.myworkdayjobs.com/External
-https://monday.wd1.myworkdayjobs.com/External
+https://salesforce.wd1.myworkdayjobs.com/External | for_profit | Salesforce
+https://adobe.wd1.myworkdayjobs.com/External | for_profit | Adobe
+https://cisco.wd5.myworkdayjobs.com/Cisco | for_profit | Cisco
+https://tesla.wd1.myworkdayjobs.com/tesla_motors | for_profit | Tesla
+https://intuit.wd1.myworkdayjobs.com/Intuit_Careers | for_profit | Intuit
+https://atlassian.wd5.myworkdayjobs.com/AtlassianCareers | for_profit | Atlassian
+https://shopify.wd1.myworkdayjobs.com/ShopifyJobs | for_profit | Shopify
+https://crowdstrike.wd5.myworkdayjobs.com/crowdstrikecareers | for_profit | CrowdStrike
+https://paloaltonetworks.wd1.myworkdayjobs.com/External | for_profit | Palo Alto Networks
+https://akamai.wd1.myworkdayjobs.com/External | for_profit | Akamai
+https://datadog.wd1.myworkdayjobs.com/datadoghq | for_profit | Datadog
+https://docusign.wd1.myworkdayjobs.com/External | for_profit | DocuSign
+https://veeva.wd1.myworkdayjobs.com/veeva_careers | for_profit | Veeva Systems
+https://uber.wd1.myworkdayjobs.com/Uber_External | for_profit | Uber
+https://ibm.wd1.myworkdayjobs.com/IBMExternalSite | for_profit | IBM
+https://hubspot.wd1.myworkdayjobs.com/HubSpot | for_profit | HubSpot
+https://collibra.wd3.myworkdayjobs.com/External | for_profit | Collibra
+https://zendesk.wd1.myworkdayjobs.com/zendesk | for_profit | Zendesk
+https://workato.wd1.myworkdayjobs.com/External | for_profit | Workato
+https://monday.wd1.myworkdayjobs.com/External | for_profit | monday.com

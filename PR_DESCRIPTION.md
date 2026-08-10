@@ -60,6 +60,28 @@
 - **UX polish**: no outer page scrollbar (global scroll lock); fixed-height, non-resizing modals;
   single-scroll "How JobScout works"; deterministic "Tailor as" row with an always-available "Set active";
   deep-match now runs under the profile you tailor with.
+- **Application funnel analytics**: the Pipeline tab now surfaces total applications, response/interview/
+  offer rates, and a per-source **Direct vs Discovery** conversion table above the tracker — computed from
+  the stages you already set, no new data collection and no LLM cost. `PipelineAnalytics.from_entries`
+  (pure/tested) is embedded in `GET /api/profiles/{id}/pipeline`. (Single-status store → "reached" rates
+  are a documented conservative floor; response rate is exact.)
+- **Auth0 login + Supabase hosting** (all env-gated; unset = today's single-local-user behavior):
+  **Auth0** identity verified at the one `current_user_id` seam (PyJWT/JWKS, RS256, auto-provision by
+  `sub`→`email`), React SPA login gate via `@auth0/auth0-react`. **Supabase Postgres** relational store
+  (`PostgresRelationalStore`, psycopg pool — subclasses the DuckDB store, swapping only the connection, so
+  the whole test suite still guards the shared SQL; DuckDB stays the local/test fallback). **Supabase
+  Storage** for resumes + tailored PDF/DOCX behind the `BlobStore` seam. No RLS (app-level tenancy is
+  already leak-proof). `scripts/migrate_duckdb_to_postgres.py`; `docs/auth-and-hosting.md`. Postgres path
+  proven by 6 integration tests against real Postgres 16 in Docker.
+- **LaTeX resume engine + AI-reduction dashboards** (default `TAILOR_ENGINE=latex`): tailoring now builds a
+  **PDF + DOCX** from each profile's OWN resume — the LLM writes a canonical-constrained content plan
+  (never raw LaTeX; a deterministic escaped renderer fills a fixed template), a warn-only fabrication audit
+  flags anything ungrounded, and a lightweight pure-Python **AI-detection metric suite** (`resume_metrics.py`,
+  ported/trimmed from a research suite — no torch/spaCy) scores before/after "humanization". Two native-React
+  dashboards visualize it: a **per-job** panel (before→after humanization rings + the metrics tailoring moved
+  most + audit warnings) and a **per-candidate** Profile dashboard (every tailored resume by humanization
+  score + PDF/DOCX links + the pipeline funnel). New routes: `…/tailored/{job}/pdf`, `…/metrics`,
+  `…/dashboard`. Legacy DOCX-only path kept via `TAILOR_ENGINE=node`. Needs system `xelatex` + `pandoc`.
 - **Ops/quality**: `scripts/check.sh` one-shot gate + GitHub Actions CI, app `Dockerfile`, central logging
   config, pinned `requirements-lock.txt`.
 - **Docs**: new `docs/multi-tenancy.md` (global-vs-private data-split diagram + leak table + auth/DB
@@ -75,7 +97,9 @@ For You: **cold 22.8s → 3.0s, warm 6.3s → 0.5–1.1s** (verdict memoization 
 TTL cache, skill/regex memoization, eligibility fast path, facet skipping). Recommendation ceiling 500.
 
 ## Quality
-- **576 backend tests passing** (incl. tenancy/IDOR, entitlements, guard-rail, admin, and seam tests);
+- **637 backend tests passing** (incl. tenancy/IDOR, entitlements, guard-rail, admin, seam,
+  pipeline-analytics, AI-reduction-metrics, LaTeX-engine [real xelatex+pandoc build], Auth0 JWT/provisioning,
+  Supabase-Storage, and Postgres-store [real Postgres 16 in Docker] tests);
   ruff + mypy clean; frontend tsc + vite build clean; `scripts/check.sh` runs the whole gate.
 - No personal data in the repo: profiles/resumes/DuckDB/`.env` are gitignored (never committed);
   fixtures + docs use generic placeholders.

@@ -14,7 +14,8 @@ import {
 } from '@phosphor-icons/react'
 import { useState } from 'react'
 import type { DeepMatch, Job } from '../types'
-import { useJob, useDeepMatch, useCachedDeepMatch, useTailorResume, useTailoredResumes, useProfiles, useProfileFits } from '../api/client'
+import { useJob, useDeepMatch, useCachedDeepMatch, useTailorResume, useTailoredResumes, useTailoredMetrics, useProfiles, useProfileFits } from '../api/client'
+import { JobDashboard } from './JobDashboard'
 import { useActiveProfile } from '../ProfileContext'
 import { SponsorshipBadge, EVerifyBadge } from './SponsorshipBadge'
 
@@ -217,6 +218,9 @@ export default function JobDetailPane({ jobId, onClose }: JobDetailPaneProps) {
   // scoped to the profile we'd actually tailor as.
   const { data: tailoredList } = useTailoredResumes(tailorProfileId)
   const existingTailored = tailoredList?.tailored.find((t) => t.job_id === jobId)
+  // AI-reduction metrics for a previously-built resume (per-job dashboard). Skipped
+  // while a fresh tailor result is on screen (that response carries its own metrics).
+  const persistedMetrics = useTailoredMetrics(tailorProfileId, jobId, !!existingTailored && !tailored.data)
 
   const salary = job ? formatSalary(job.salary_min, job.salary_max, job.salary_currency) : null
   const postedStr = job?.posted_date
@@ -390,10 +394,16 @@ export default function JobDetailPane({ jobId, onClose }: JobDetailPaneProps) {
             <a href={existingTailored.download_url} className="font-semibold text-signal-700 underline underline-offset-2">
               Download tailored DOCX{existingTailored.filename ? ` (${existingTailored.filename})` : ''}
             </a>
+            {persistedMetrics.data && (
+              <a href={`${existingTailored.download_url}/pdf`} className="ml-2 font-semibold text-signal-700 underline underline-offset-2">PDF</a>
+            )}
             <span className="text-slate-400"> · built {new Date(existingTailored.created_at).toLocaleDateString()}</span>
             {existingTailored.up_to_date
               ? <span className="text-slate-400"> · up to date</span>
               : <span className="text-amber-600"> · your resume changed — re-tailor to refresh</span>}
+            {persistedMetrics.data && (
+              <JobDashboard metrics={persistedMetrics.data.metrics} warnings={persistedMetrics.data.warnings} />
+            )}
           </div>
         )}
         {!isLoading && job && (tailored.data || tailored.error) && (
@@ -434,9 +444,18 @@ export default function JobDetailPane({ jobId, onClose }: JobDetailPaneProps) {
                 {tailored.data.gate?.recommendation === 'skip' && (
                   <p className="text-amber-700">Built on request despite a skip recommendation — double-check the walls below before applying.</p>
                 )}
-                <a href={tailored.data.download_url} className="font-semibold text-signal-700 underline underline-offset-2">Download tailored DOCX · {tailored.data.filename}</a>
+                <div>
+                  <a href={tailored.data.download_url} className="font-semibold text-signal-700 underline underline-offset-2">Download tailored DOCX · {tailored.data.filename}</a>
+                  {tailored.data.pdf_download_url && (
+                    <a href={tailored.data.pdf_download_url} className="ml-2 font-semibold text-signal-700 underline underline-offset-2">PDF</a>
+                  )}
+                </div>
                 {(tailored.data.notes ?? []).length > 0 && <p>Tailored with {tailored.data.provider}/{tailored.data.model}: {(tailored.data.notes ?? []).join(' · ')}</p>}
-                {(tailored.data.warnings ?? []).map((warning) => <p key={warning} className="text-amber-700">{warning}</p>)}
+                {/* Audit warnings render inside the dashboard; show here only without metrics. */}
+                {!tailored.data.metrics && (tailored.data.warnings ?? []).map((warning) => <p key={warning} className="text-amber-700">{warning}</p>)}
+                {tailored.data.metrics && (
+                  <JobDashboard metrics={tailored.data.metrics} warnings={tailored.data.warnings} />
+                )}
               </div>
             ) : null}
           </div>

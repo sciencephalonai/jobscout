@@ -1,14 +1,14 @@
 # Hardware / semiconductor Workday tenants — high H-1B filers, NOT defense primes
-# Format: https://{tenant}.{region}.myworkdayjobs.com/{site}
+# Format: <career-site-url> | <type> | <Display Name>
 # probe_workday.py will verify each and add only those that return jobs.
-https://nvidia.wd5.myworkdayjobs.com/NVIDIAExternalCareerSite
-https://intel.wd1.myworkdayjobs.com/External
-https://amd.wd1.myworkdayjobs.com/External
-https://qualcomm.wd5.myworkdayjobs.com/External
-https://texasinstruments.wd1.myworkdayjobs.com/TIExternalSite
-https://broadcom.wd1.myworkdayjobs.com/External
-https://amat.wd1.myworkdayjobs.com/External
-https://marvell.wd1.myworkdayjobs.com/External
-https://lamresearch.wd1.myworkdayjobs.com/Lam_Careers
-https://kla.wd1.myworkdayjobs.com/Search
-https://asml.wd3.myworkdayjobs.com/External
+https://nvidia.wd5.myworkdayjobs.com/NVIDIAExternalCareerSite | for_profit | NVIDIA
+https://intel.wd1.myworkdayjobs.com/External | for_profit | Intel
+https://amd.wd1.myworkdayjobs.com/External | for_profit | AMD
+https://qualcomm.wd5.myworkdayjobs.com/External | for_profit | Qualcomm
+https://texasinstruments.wd1.myworkdayjobs.com/TIExternalSite | for_profit | Texas Instruments
+https://broadcom.wd1.myworkdayjobs.com/External | for_profit | Broadcom
+https://amat.wd1.myworkdayjobs.com/External | for_profit | Applied Materials
+https://marvell.wd1.myworkdayjobs.com/External | for_profit | Marvell
+https://lamresearch.wd1.myworkdayjobs.com/Lam_Careers | for_profit | Lam Research
+https://kla.wd1.myworkdayjobs.com/Search | for_profit | KLA
+https://asml.wd3.myworkdayjobs.com/External | for_profit | ASML
